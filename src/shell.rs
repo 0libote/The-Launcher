@@ -4155,13 +4155,13 @@ fn game_modal(s: &Shell, look: Look) -> El {
         .key("game-modal-panel")
         .role("dialog")
         .label(game.name.clone())
+        // Full-screen sheet: it fills the dimmed layer edge to edge (minus a
+        // small margin), so the game gets the whole window. h_full gives the
+        // sheet a definite height so the flexible scroll below has room to
+        // fill; max_h alone would leave it unbounded and the scroll would
+        // collapse to zero.
         .w_full()
-        .max_w(880.0)
-        // h_full gives the sheet a definite height (capped by max_h) so the
-        // flexible scroll below has room to fill; max_h alone leaves it
-        // unbounded and the scroll collapses to zero.
         .h_full()
-        .max_h(720.0)
         .radius(16.0)
         .continuous_corners()
         .fill(look.surface)
@@ -4217,19 +4217,19 @@ fn game_modal(s: &Shell, look: Look) -> El {
                 .w_full()
                 .h_full()
                 .center()
-                .padding(16.0)
+                .padding(8.0)
                 .child(sheet),
         )
 }
 
-/// Fluid cover banner for the modal: full width up to a cap, so narrow
-/// windows never clip it and wide ones keep a prominent showcase banner.
+/// Full-width cover banner for the modal: it spans the sheet on narrow
+/// windows and caps at showcase width on full-screen ones.
 fn modal_cover(s: &Shell, look: Look, game: &Game) -> El {
     let art = el()
         .key("art")
         .w_full()
-        .max_w(800.0)
-        .h(300.0)
+        .max_w(1200.0)
+        .h(360.0)
         .radius(radius::LG)
         .clip_rounded(radius::LG);
     let art = if let Some(pixels) = game.cover.as_ref().and_then(|path| s.covers.get(path)) {
@@ -4670,7 +4670,7 @@ mod tests {
     }
 
     #[test]
-    fn game_modal_uses_showcase_size_on_wide_windows() {
+    fn game_modal_fills_wide_windows() {
         let mut rt = Runtime::new(Shell::demo(), view, (2560.0, 1440.0), Env::new(true, 2.0));
         rt.frame(0.0);
         click(&mut rt, "game-0");
@@ -4680,18 +4680,13 @@ mod tests {
             .find(|e| e.key.as_deref() == Some("game-modal-panel"))
             .expect("modal panel renders");
         assert!(
-            panel.rect[2] > 600.0,
-            "showcase modal is wider than the old compact sheet: {:?}",
+            panel.rect[2] >= 2560.0 - 32.0,
+            "modal fills the window width: {:?}",
             panel.rect
         );
         assert!(
-            panel.rect[2] <= 880.0 + 1.0,
-            "showcase modal stays capped on ultrawide screens: {:?}",
-            panel.rect
-        );
-        assert!(
-            panel.rect[3] > 560.0,
-            "showcase modal is taller than the old compact sheet: {:?}",
+            panel.rect[3] >= 1440.0 - 32.0,
+            "modal fills the window height: {:?}",
             panel.rect
         );
     }
