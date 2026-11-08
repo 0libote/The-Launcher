@@ -19,6 +19,7 @@ mod art;
 mod covers;
 mod editor;
 mod frame;
+mod metadata_ui;
 mod theme;
 mod views;
 use theme::*;
@@ -62,6 +63,7 @@ pub struct Launcher {
     workspace_path: PathBuf,
     editor_original: Option<Workspace>,
 
+    metadata_ui: metadata_ui::MetadataUi,
     steam_settings: bool,
     steam_root: String,
     steam_account: String,
@@ -85,6 +87,8 @@ impl Launcher {
                 )),
             ),
         };
+        let (metadata_ui, metadata_error) = metadata_ui::MetadataUi::load(&path);
+        let notice = metadata_error.map(|e| (e, true)).or(notice);
         theme::apply(ctx, &workspace.current().skin);
         Self {
             library,
@@ -105,6 +109,7 @@ impl Launcher {
             workspace,
             workspace_path,
             editor_original: None,
+            metadata_ui,
             steam_settings: false,
             steam_root: String::new(),
             steam_account: String::new(),
@@ -195,6 +200,7 @@ impl Launcher {
         self.steam_settings = false;
     }
     fn poll(&mut self) {
+        self.poll_metadata();
         let result = self.scan.as_ref().map(|rx| rx.try_recv());
         match result {
             Some(Ok(result)) => {
@@ -227,6 +233,7 @@ impl Launcher {
                                     continue;
                                 }
                                 l.add(Game {
+                                    metadata: Default::default(),
                                     name: game.name,
                                     target: Target::Steam {
                                         app_id: game.app_id,
@@ -241,6 +248,7 @@ impl Launcher {
                             }
                             Ok(())
                         });
+                        let imported_ok = result.is_ok();
                         self.result(
                             result,
                             &format!(
@@ -248,6 +256,9 @@ impl Launcher {
                                 warnings.join("\n")
                             ),
                         );
+                        if imported_ok && self.metadata_ui.settings.automatic {
+                            self.queue_automatic_metadata();
+                        }
                     }
                     Err(e) => self.result(Err(e), ""),
                 }
@@ -282,7 +293,7 @@ impl Launcher {
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.allocate_ui_with_layout(
-                        Vec2::new((ui.available_width() - 320.0).max(80.0), 50.0),
+                        Vec2::new((ui.available_width() - 420.0).max(80.0), 50.0),
                         Layout::top_down(Align::LEFT),
                         |ui| {
                             ui.label(heading("Library", 24.0));
@@ -298,6 +309,16 @@ impl Launcher {
                         },
                     );
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if ui
+                            .button(if self.metadata_ui.busy() {
+                                "Metadata…"
+                            } else {
+                                "Metadata"
+                            })
+                            .clicked()
+                        {
+                            self.open_metadata(None);
+                        }
                         if button(ui, "Add game", Icon::Plus, true).clicked() {
                             self.add_dialog();
                         }
@@ -511,6 +532,12 @@ impl Launcher {
                 self.open_editor();
             }
             badge(ui, &visible.len().to_string(), colors.muted);
+            if self.workspace.current().layout.details == Details::Hidden
+                && let Some(index) = self.selected
+            {
+                let game = self.library.games[index].clone();
+                self.game_options(ui, index, &game);
+            }
             if self.selected.is_some()
                 && self.workspace.current().layout.details == Details::Hidden
                 && ui.small_button("Play / Install").clicked()
@@ -834,6 +861,10 @@ Pick something you love. Press play.",
             self.covers.forget(&path);
             self.library.change(&self.path, |library| {
                 library.games[index].cover = Some(path);
+                library.games[index]
+                    .metadata
+                    .sources
+                    .insert("cover".into(), "Local file".into());
                 Ok(())
             })
         })();
@@ -933,6 +964,10 @@ Pick something you love. Press play.",
     }
     fn game_options(&mut self, ui: &mut egui::Ui, i: usize, game: &Game) {
         ui.menu_button("Options", |ui| {
+            if ui.button("Metadata & artwork…").clicked() {
+                self.open_metadata(Some(i));
+                ui.close();
+            }
             if ui.button("Choose cover art…").clicked() {
                 ui.close();
                 self.choose_cover(i);
@@ -940,6 +975,7 @@ Pick something you love. Press play.",
             if game.cover.is_some() && ui.button("Remove cover art").clicked() {
                 let result = self.library.change(&self.path, |l| {
                     l.games[i].cover = None;
+                    l.games[i].metadata.sources.remove("cover");
                     Ok(())
                 });
                 self.result(result, "Original cover restored");
@@ -1088,6 +1124,7 @@ Pick something you love. Press play.",
                 let path = std::fs::canonicalize(d.path.trim())
                     .with_context(|| format!("Cannot open executable: {}", d.path.trim()))?;
                 let game = Game {
+                    metadata: Default::default(),
                     name: d.name.trim().into(),
                     target: Target::Executable {
                         path,
@@ -1119,6 +1156,7 @@ Pick something you love. Press play.",
                             cover: l.games[i].cover.clone(),
                             installed: l.games[i].installed,
                             hidden: l.games[i].hidden,
+                            metadata: l.games[i].metadata.clone(),
                             ..game
                         };
                     } else {
@@ -1131,6 +1169,9 @@ Pick something you love. Press play.",
             })();
             if result.is_ok() {
                 self.draft = None;
+                if self.metadata_ui.settings.automatic {
+                    self.queue_automatic_metadata();
+                }
             }
             self.result(result, "Game saved to your library");
         }
@@ -1209,6 +1250,7 @@ impl Launcher {
             && !self.remove
             && self.editor_original.is_none()
             && !self.steam_settings
+            && !self.metadata_ui.open
             && !egui::Popup::is_any_open(ctx)
             && (!ctx.wants_keyboard_input() || self.shelf_focused)
         {
@@ -1305,8 +1347,9 @@ impl Launcher {
         self.dialogs(ctx);
         self.steam_dialog(ctx);
         self.workspace_editor(ctx);
+        self.metadata_dialog(ctx);
         frame::resize_edges(ctx, self.fullscreen);
-        if !self.children.is_empty() || self.scan.is_some() {
+        if !self.children.is_empty() || self.scan.is_some() || self.metadata_ui.busy() {
             ctx.request_repaint_after(Duration::from_millis(500));
         }
     }
@@ -1383,6 +1426,7 @@ mod tests {
                     schema_version: 1,
                     games: (0..count)
                         .map(|i| Game {
+                            metadata: Default::default(),
                             name: format!("A deliberately very long game title {i}"),
                             target: Target::Steam { app_id: i + 1 },
                             favorite: false,
@@ -1418,6 +1462,7 @@ mod tests {
             schema_version: 1,
             games: (1..=12)
                 .map(|i| Game {
+                    metadata: Default::default(),
                     name: format!("Game {i}"),
                     target: Target::Steam { app_id: i },
                     favorite: false,
@@ -1476,6 +1521,7 @@ mod tests {
                         dir.path().join("library.json"),
                     );
                     app.library.games = vec![Game {
+                        metadata: Default::default(),
                         name: "Long title for a user-built layout".repeat(2),
                         target: Target::Steam { app_id: 10 },
                         favorite: true,
@@ -1522,6 +1568,7 @@ mod tests {
         let mut app =
             Launcher::from_library(&ctx, Library::default(), dir.path().join("library.json"));
         app.library.games.push(Game {
+            metadata: Default::default(),
             name: "My custom title".into(),
             target: Target::Steam { app_id: 10 },
             favorite: true,
@@ -1558,6 +1605,7 @@ mod tests {
             Launcher::from_library(&ctx, Library::default(), PathBuf::from("unused.json"));
         app.library.games = vec![
             Game {
+                metadata: Default::default(),
                 name: "Moon Garden".into(),
                 target: Target::Steam { app_id: 10 },
                 favorite: true,
@@ -1567,6 +1615,7 @@ mod tests {
                 hidden: false,
             },
             Game {
+                metadata: Default::default(),
                 name: "Moon Racer".into(),
                 target: Target::Steam { app_id: 20 },
                 favorite: false,
@@ -1594,6 +1643,7 @@ mod tests {
             Launcher::from_library(&ctx, Library::default(), PathBuf::from("unused.json"));
         app.library.games = vec![
             Game {
+                metadata: Default::default(),
                 name: "Shown Steam".into(),
                 target: Target::Steam { app_id: 10 },
                 favorite: false,
@@ -1603,6 +1653,7 @@ mod tests {
                 hidden: false,
             },
             Game {
+                metadata: Default::default(),
                 name: "Hidden Steam".into(),
                 target: Target::Steam { app_id: 20 },
                 favorite: false,
@@ -1626,6 +1677,7 @@ mod tests {
         let mut app =
             Launcher::from_library(&ctx, Library::default(), dir.path().join("library.json"));
         app.library.games.push(Game {
+            metadata: Default::default(),
             name: "Hidden Steam".into(),
             target: Target::Steam { app_id: 10 },
             favorite: false,
@@ -1652,5 +1704,39 @@ mod tests {
         assert!(app.visible().is_empty());
         app.filter = Filter::Hidden;
         assert_eq!(app.visible(), vec![0]);
+    }
+    #[test]
+    fn metadata_modal_blocks_library_arrows_and_renders_at_minimum_size() {
+        let temp = tempfile::tempdir().unwrap();
+        for size in [Vec2::new(840.0, 600.0), Vec2::new(1200.0, 800.0)] {
+            let ctx = egui::Context::default();
+            let games=(1..=2).map(|id|serde_json::from_value(serde_json::json!({"name":format!("Game {id}"),"target":{"kind":"steam","app_id":id}})).unwrap()).collect();
+            let mut app = Launcher::from_library(
+                &ctx,
+                Library {
+                    schema_version: 1,
+                    games,
+                },
+                temp.path().join("library.json"),
+            );
+            app.open_metadata(Some(0));
+            frame(&mut app, &ctx, size, vec![]);
+            frame(
+                &mut app,
+                &ctx,
+                size,
+                vec![egui::Event::Key {
+                    key: Key::ArrowRight,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+            );
+            assert_eq!(app.selected, Some(0));
+            assert!(app.metadata_ui.open);
+            app.open_metadata(None);
+            frame(&mut app, &ctx, size, vec![]);
+        }
     }
 }

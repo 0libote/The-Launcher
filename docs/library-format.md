@@ -39,7 +39,9 @@ The app owns `library.json`. Close it and back up the file before editing. Paths
 | `target.app_id` | Positive 32-bit Steam application ID. |
 | `favorite` | Boolean, defaults to false when absent. |
 | `installed` | Optional boolean. Steam import sets it; false requests installation instead of launching. Null/absent preserves legacy launch behavior. |
-| `cover` | Optional local PNG/JPEG path, defaults to null/absent. Not copied; missing files use generated artwork. Older schema-1 libraries continue to load. |
+| `cover` | Optional local PNG/JPEG path. Manual selections are external references; downloaded covers point into the local `artwork/` cache. Missing files use generated artwork. |
+| `metadata` | Defaulted object containing `steam_app_id` (optional metadata-only match for an executable), `description`, `developers`, `publishers`, `genres`, `release_date`, optional local `background`/`logo` paths, and per-field `sources` map. Missing fields default empty. See [metadata](metadata.md). |
+| `hidden` | Boolean, defaults false. Hidden games remain in the library and are excluded from automatic metadata work. |
 | `last_launched` | Optional Unix timestamp in seconds, defaults to null when absent. Records dispatch, not play duration. |
 
-Do not share your library publicly without reviewing paths and launch arguments; these may contain personal folder names or other private values. No credentials are required by the launcher. There is no automatic migration in version 1. Unknown JSON fields are currently ignored by Serde and will not survive a save; do not use them to store custom metadata.
+Do not share your library publicly without reviewing paths and launch arguments; these may contain personal folder names or other private values. Metadata can use public Steam data without credentials; optional Steam account import and SteamGridDB require separate session-only keys. No keys are stored here. There is no automatic migration in version 1. Unknown JSON fields are currently ignored by Serde and will not survive a save; do not use them to store custom metadata.

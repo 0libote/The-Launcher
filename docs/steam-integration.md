@@ -19,7 +19,7 @@ Select **Import Steam → Import library**. Windows finds the client through the
 
 Import reads installed `appmanifest_*.acf` files and requires the fully-installed flag and a safe, existing directory under `steamapps/common`. It falls back to `UserConfig/name` if the main name is blank. Temporary manifests and Steamworks Common Redistributables (228980) are excluded. Malformed files and unavailable additional libraries produce warnings and let other games import. An unusable primary root is an error. No Steam login is needed for this path.
 
-Cached portrait art in `appcache/librarycache/<appid>_library_600x900.jpg` or `.png` is used when present. This currently supports those flat cache paths, not every newer Steam cache layout or network artwork retrieval. Existing user-selected cover paths take priority.
+Cached portrait art in `appcache/librarycache/<appid>_library_600x900.jpg` or `.png` is used when present. The importer supports those flat cache paths rather than every newer Steam cache layout. Existing user-selected cover paths take priority. The separate built-in [metadata downloader](metadata.md) can fetch official/community artwork and store information automatically after import, without a Steam account key.
 
 ## Account-owned library
 

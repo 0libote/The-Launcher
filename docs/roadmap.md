@@ -24,7 +24,7 @@ Steam now follows the registry/manifests plus optional Web API account-import ap
 
 ## Then: deepen the shelf
 
-Explore 3D cases or a spatial shelf, optional sound and motion with off switches, metadata and artwork providers with opt-in downloads, and collections. Prototype the interaction and performance before committing the entire UI to a 3D renderer. Preserve a usable low-motion path.
+Explore 3D cases or a spatial shelf, optional sound and motion with off switches, richer metadata-driven collections, and expanded built-in providers. Prototype the interaction and performance before committing the entire UI to a 3D renderer. Preserve a usable low-motion path.
 
 ## Later: broaden the library
 
@@ -33,3 +33,9 @@ Consider other storefronts, emulators and ROM launch profiles, portable mode, ro
 ## Release gates
 
 Choose a project license. Test Windows graphics drivers, DPI, accessibility, native dialogs, Unicode paths, Steam across multiple drives, and update/recovery behavior. Decide packaging and signing. Publish known limitations and backup instructions alongside a reproducible build process before inviting users to entrust a large library to the launcher.
+
+## Built-in metadata foundation (implemented)
+
+Steam descriptions/credits/genres/release dates, automatic fill after import or confirmed matching, official cover/background/logo downloads, optional SteamGridDB artwork preference with Steam fallback, individual image previews/selections, source attribution, offline PNG cache, and preservation-aware background results. See [metadata](metadata.md) for current limits.
+
+Next metadata work: another real catalogue for games outside Steam (evaluate IGDB authentication/licensing), per-field provider priorities, manual text editing and metadata-driven filters, non-Steam artwork identities, credential storage through the OS, cache quotas/cleanup, and icons/screenshots. Dynamic extensions should follow working provider contracts rather than become a prerequisite for everyday metadata.

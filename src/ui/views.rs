@@ -214,6 +214,7 @@ impl Launcher {
                                 badge(ui, "Hidden", colors.muted);
                             }
                         });
+                        self.metadata_details(ui, &game);
                         ui.label(
                             RichText::new(if game.installed == Some(false) {
                                 "Not installed"

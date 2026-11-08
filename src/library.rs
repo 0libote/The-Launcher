@@ -21,6 +21,8 @@ pub enum Target {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Game {
+    #[serde(default)]
+    pub metadata: crate::metadata::GameMetadata,
     pub name: String,
     pub target: Target,
     #[serde(default)]
@@ -153,6 +155,7 @@ mod tests {
     use super::*;
     fn game(id: u32) -> Game {
         Game {
+            metadata: Default::default(),
             name: "Test".into(),
             target: Target::Steam { app_id: id },
             favorite: false,

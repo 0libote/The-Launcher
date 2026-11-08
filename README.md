@@ -13,10 +13,11 @@ The bundled skin is a starting layout. Use **Customize** to build yours.
 - Detect Steam automatically, import installed games across libraries, and optionally merge owned/uninstalled games through the official account API. On Windows, launch/install through the Steam client.
 - Arrange navigation/details/tools panels, choose grid/list/shelf views, edit colors, and save named layouts. The launcher owns its skinnable window frame.
 - Persist a local JSON library with atomic replacement and a single-instance lock.
+- Automatically fetch Steam descriptions, credits, genres, release dates, and official artwork. Match local executables to Steam titles, or choose optional SteamGridDB artwork with previews.
 - Choose local PNG/JPEG cover art for any game, with original generated art as a fallback.
 - Browse with mouse or arrow keys, press Enter to play, and toggle full screen with F11. Tab navigates controls.
 
-No demo games are added to the real library. The generated cartridge labels are original artwork, not downloaded box art. Select a game and use **Options → Choose cover art…** to add a local image. Controller input and a 3D shelf are future work.
+No demo games are added to the real library. The generated cartridge labels are original artwork, not downloaded box art. Select a game and use **Options → Choose cover art…** to add a local image. Open **Metadata** for download defaults, or **Options → Metadata & artwork…** to match a title, fill missing fields, or choose images. Controller input and a 3D shelf are future work.
 
 ## Develop on Windows
 
@@ -53,10 +54,11 @@ Back up `library.json` before manual edits. Close the app first. If JSON is dama
 
 - [Visual layout editor and skinnable frame](docs/customization.md)
 - [Steam integration and Playnite reference](docs/steam-integration.md)
+- [Metadata providers, automatic fetching, and artwork choices](docs/metadata.md)
 - [Bundled visual system and cover art](docs/design.md)
 - [Architecture and decisions](docs/architecture.md)
 - [Development and validation](docs/development.md)
 - [Roadmap](docs/roadmap.md)
 - [Data format](docs/library-format.md)
 
-Keep behavioral changes and their docs in the same change. The first milestones favor reliable local launching before metadata services, accounts, plugins, or synchronization. The project’s distribution license has not been chosen yet; choose one before publishing releases.
+Keep behavioral changes and their docs in the same change. Built-in metadata providers now complement local launching; external plugins and synchronization remain future work. The project’s distribution license has not been chosen yet; choose one before publishing releases.

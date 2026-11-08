@@ -10,6 +10,7 @@ pub(super) enum Panel {
 impl Launcher {
     pub(super) fn open_editor(&mut self) {
         if self.editor_original.is_none() {
+            self.metadata_ui.open = false;
             self.notice = None;
             self.draft = None;
             self.remove = false;
