@@ -23,13 +23,11 @@ Saving validates layout names, positions, and supported size ranges, then atomic
 
 ## Window behavior
 
-The launcher owns its frame, so Windows’ accent-colored standard title bar is not part of the skin. The frame provides minimize, maximize/restore, close, drag, double-click-to-maximize, and edge/corner resize controls. These send viewport commands to the native backend; they do not simulate window movement with a frame-by-frame position loop. Alt+F4 is still handled by the window backend.
-
-Windows docking, Snap behavior, high DPI, keyboard focus, and system-menu behavior need real Windows validation. The custom maximize button does not implement Windows 11’s hover Snap-layout flyout. File pickers remain native system dialogs; they are intentionally outside the launcher skin. User-selected colors can reduce contrast; the bundled skin has contrast tests, arbitrary custom palettes do not get an accessibility guarantee.
+The launcher uses the native window frame. File pickers remain native system dialogs when the deferred add/edit dialogs land. Windows docking, Snap behavior, high DPI, keyboard focus, and system-menu behavior need real Windows validation.
 
 ## Developer boundaries
 
-`src/workspace.rs` defines and validates the saved model. `src/ui/editor.rs` edits it. The regular renderer reads the active layout rather than owning the arrangement. `src/ui/theme.rs` applies the active skin to egui and custom painting. `src/ui/frame.rs` owns window chrome; `src/ui/views.rs` owns list/shelf rendering and right-hand details.
+`src/workspace.rs` defines and validates the saved model. Its visual editor overlay is deferred; the Rune shell in `src/shell.rs` reads the library directly. Keep game and integration operations independent of panel positions.
 
 To add a configurable component, define its supported docking behavior and persistent model, implement its renderer, wire it into the editor, and add restart/layout-bound tests. Keep game and integration operations independent of panel positions.
 

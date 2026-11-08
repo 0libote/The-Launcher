@@ -1,27 +1,28 @@
 # The Launcher
 
-A native Rust game launcher whose workspace is arranged by its user. Move panels, choose grid/list/shelf views, and save your own layouts and colors. Inspired by Playnite’s unified library and [BoxShelf’s](https://github.com/sassiestrhihno/boxshelf-beta) tactile shelves. This is an independent implementation; no source or artwork is copied from either project.
+A native Rust game launcher with a Rune-rendered shelf. Inspired by Playnite’s unified library and [BoxShelf’s](https://github.com/sassiestrhihno/boxshelf-beta) tactile shelves. This is an independent implementation; no source or artwork is copied from either project.
 
-**Status: early foundation, not a packaged release.** Application logic and UI are Rust. Bun provides convenient development commands; the built application does not require Bun, Node, a browser, or a webview.
+**Status: Rune-native foundation, mid-migration, not a packaged release.** Application logic and the shell are Rust on Rune. Bun provides convenient development commands; the built application does not require Bun, Node, a browser, or a webview. Application logic and UI are Rust. Bun provides convenient development commands; the built application does not require Bun, Node, a browser, or a webview.
 
-The bundled skin is a starting layout. Use **Customize** to build yours.
+The card art is original gradient art with initials.
 
 ## What works
 
-- Add a local game, choose its executable, name it, and set arguments and a working directory.
-- Launch games, edit launch options, favorite entries, search, and filter by source.
-- Detect Steam automatically, import installed games across libraries, and optionally merge owned/uninstalled games through the official account API. On Windows, launch/install through the Steam client.
-- Arrange navigation/details/tools panels, choose grid/list/shelf views, edit colors, and save named layouts. The launcher owns its skinnable window frame.
+- Browse the shelf in grid, list, or shelf views, search by name, filter by collection (All/Favorites/PC/Steam/Hidden), favorite games, and inspect details.
+- Add PC games through a dialog with inline validation, edit launch options, and remove entries or hide Steam games (restorable from Hidden).
+- Import Steam libraries through a background scan with warnings surfaced; entries merge without touching custom names or favorites.
+- Fetch Steam descriptions, credits, genres, and artwork, match executables to Steam titles, and pick alternate artwork. Automatic fills run after imports and saves unless disabled.
+- Choose local PNG/JPEG cover art per game, with original generated art as a fallback.
+- Arrange navigation/details panels, pick views and tile sizes, and restyle with named layouts and color presets, all saved to a workspace file.
+- Launch games through Play, with errors surfaced in the status bar. On Windows, Steam entries play/install through the Steam client.
 - Persist a local JSON library with atomic replacement and a single-instance lock.
-- Automatically fetch Steam descriptions, credits, genres, release dates, and official artwork. Match local executables to Steam titles, or choose optional SteamGridDB artwork with previews.
-- Choose local PNG/JPEG cover art for any game, with original generated art as a fallback.
-- Browse with mouse or arrow keys, press Enter to play, and toggle full screen with F11. Tab navigates controls.
+- Browse with the mouse and search by typing. Keyboard navigation and controller input are future work.
 
-No demo games are added to the real library. The generated cartridge labels are original artwork, not downloaded box art. Select a game and use **Options → Choose cover art…** to add a local image. Open **Metadata** for download defaults, or **Options → Metadata & artwork…** to match a title, fill missing fields, or choose images. Controller input and a 3D shelf are future work.
+No demo games are added to the real library. The gradient card art is original, not downloaded box art. Artwork downloads come from Steam or SteamGridDB only when you fetch them. Controller input and television-distance tuning are future work.
 
 ## Develop on Windows
 
-Install [Rust stable](https://rustup.rs/) **1.92 or newer** with the MSVC toolchain and Visual Studio Build Tools (Desktop development with C++, including a Windows SDK). Install [Bun](https://bun.sh/docs/installation). A GPU/driver supporting OpenGL 3.3 or later is needed.
+Install Rust **1.99.1** (pinned by `rust-toolchain.toml` for the Rune dependency) with the MSVC toolchain and Visual Studio Build Tools (Desktop development with C++, including a Windows SDK). Install [Bun](https://bun.sh/docs/installation). A GPU/driver supporting modern DirectX 12 or Vulkan is needed.
 
 ```powershell
 bun run dev

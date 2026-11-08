@@ -1,6 +1,6 @@
 # Native visual system
 
-The launcher takes its cues from console collection screens and physical game cases. The design stays in Rust/egui. It does not use HTML, CSS, a webview, remote fonts, or a 3D renderer.
+The launcher takes its cues from console collection screens and physical game cases. The design stays in Rust, rendered by Rune. It does not use HTML, CSS, a webview, remote fonts, or a 3D renderer.
 
 ## Palette and type
 
@@ -14,7 +14,7 @@ The launcher takes its cues from console collection screens and physical game ca
 | `MINT` | `#9fdecc` | Active collection, keyboard focus, selection |
 | `LILAC` | `#b7afe0` | Original fallback artwork |
 
-Manrope Regular is the body face; Oxanium SemiBold gives headings a squared console character. Both are embedded under SIL OFL licenses; sources and regeneration instructions live in `assets/fonts/README.md`. The launcher owns its title bar and frame; their colors follow the active user skin. See [workspace customization](customization.md).
+Rune renders the interface with its embedded Inter face. The launcher uses the native window frame. See [workspace customization](customization.md).
 
 ## Composition
 
@@ -25,7 +25,7 @@ A 208-point navigation rail holds the brand, source/favorite filters with real c
 
 The empty collection shows an original, vector-drawn trio of cartridge cases and a direct invitation to add or import games. It creates no fictional entries. Shorter windows omit supporting tips, and the welcome panel and add dialog scroll when necessary. Filtered-empty views offer a way to clear the search and return to all games.
 
-Tiles use original title-based artwork until a local cover is selected. The title’s hash picks its colors/composition, so removing or filtering another game does not change its appearance. Long titles are truncated visually; full titles remain in hover text and accessible labels. Focus and selected tiles use mint outlines. Icons are drawn with paths rather than relying on emoji or missing font symbols. These are desktop layouts, not a claim of complete controller or screen-reader support.
+Tiles use original title-based artwork until a local cover or downloaded artwork is selected. The title’s hash picks its gradient colors, so removing or filtering another game does not change its appearance. Long titles are truncated visually; full titles remain in accessible labels. Selected tiles use mint outlines. These are desktop layouts, not a claim of complete controller or screen-reader support.
 
 ## Local cover art
 
@@ -33,13 +33,13 @@ Select a game, then **Options → Choose cover art…**. PNG and JPEG are suppor
 
 The optional `cover` JSON field stores a local file reference, not a copied image. Keep that file in place. Missing or invalid images fall back to generated artwork, with the error available in the tile’s tooltip. Select the image again or restart to refresh an externally edited file. The launcher does not download, collect, or license commercial game artwork for you.
 
-Images are limited to 16 MiB and 4096 pixels per dimension, decoded with a 64 MiB allocation limit, and thumbnailed to at most 480×720 before GPU upload. Only visible tiles request images. A 64-entry cache bounds retained textures; reaching the limit clears old cache entries. Decoding is synchronous on first display; revisit background decoding if profiling large imports shows visible stalls.
+Images are limited to 16 MiB and 4096 pixels per dimension, decoded with a 64 MiB allocation limit, and thumbnailed to at most 480×720 before GPU upload. A 64-entry cache bounds retained pixels; reaching the limit clears old entries. Local covers decode once when the library loads; downloaded artwork decodes when its fetch or choice completes.
 
 ## Interaction and validation
 
-Mouse, Tab, arrows, Enter to play, and F11 remain available. Up/down navigation moves by grid row; arrow navigation scrolls the selected tile into view without animation. Search fields, modal dialogs, and popup menus retain their own keyboard behavior. Escape cancels the add/edit dialog.
+Mouse, search-by-typing, add/edit/remove dialogs, Steam import, metadata & artwork, cover art, and the workspace editor are available; arrow-key navigation, Enter to play, and fullscreen are future work. Escape closes dialogs.
 
-Headless egui tests check that empty and populated layouts fit the supported minimum and larger window sizes. Native captures and manual interaction checks complement these tests. Verify Windows title-bar behavior, high DPI, cover file picking, and accessibility on Windows hardware before release.
+Headless Rune checks cover the shell: `--scene` fixtures render to PNG and element-tree JSON, and unit tests drive selection, favorites, filters, and launch errors through scripted pointer input. Native captures and manual interaction checks complement these tests. Verify Windows behavior, high DPI, and accessibility on Windows hardware before release.
 
 ## Captures
 
