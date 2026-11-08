@@ -1,0 +1,12 @@
+{
+  "name": "the-launcher",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "bun@1.4.4",
+  "scripts": {
+    "dev": "cargo run",
+    "build": "cargo build --release",
+    "test": "cargo test --all-targets",
+    "check": "bun run scripts/check.ts"
+  }
+}
