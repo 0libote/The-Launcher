@@ -76,7 +76,7 @@ impl Launcher {
                             title.left_bottom() + Vec2::new(0.0, 15.0),
                             Align2::LEFT_CENTER,
                             format!(
-                                "{} / {}",
+                                "{} / {}{}",
                                 game.source(),
                                 match game.installed {
                                     Some(false) => "Not installed",
@@ -84,7 +84,8 @@ impl Launcher {
                                     None if matches!(game.target, Target::Steam { .. }) =>
                                         "Not checked",
                                     None => "Executable",
-                                }
+                                },
+                                if game.hidden { " · Hidden" } else { "" },
                             ),
                             FontId::proportional(11.0),
                             colors.muted,
@@ -207,7 +208,12 @@ impl Launcher {
                         self.paint_cover(ui, rect, &game);
                         ui.add_space(8.0);
                         ui.label(heading(&game.name, 23.0));
-                        badge(ui, game.source(), colors.selection);
+                        ui.horizontal(|ui| {
+                            badge(ui, game.source(), colors.selection);
+                            if game.hidden {
+                                badge(ui, "Hidden", colors.muted);
+                            }
+                        });
                         ui.label(
                             RichText::new(if game.installed == Some(false) {
                                 "Not installed"

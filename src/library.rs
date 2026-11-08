@@ -31,6 +31,8 @@ pub struct Game {
     pub cover: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub installed: Option<bool>,
+    #[serde(default)]
+    pub hidden: bool,
 }
 
 impl Game {
@@ -157,6 +159,7 @@ mod tests {
             last_launched: None,
             cover: None,
             installed: None,
+            hidden: false,
         }
     }
     #[test]
@@ -188,5 +191,24 @@ mod tests {
             assert!(Library::load(&path).is_err());
             assert_eq!(fs::read_to_string(&path).unwrap(), data);
         }
+    }
+    #[test]
+    fn hidden_defaults_to_visible_and_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("library.json");
+        fs::write(
+            &path,
+            r#"{"schema_version":1,"games":[{"name":"Game","target":{"kind":"steam","app_id":42}}]}"#,
+        )
+        .unwrap();
+        let mut library = Library::load(&path).unwrap();
+        assert!(!library.games[0].hidden);
+        library
+            .change(&path, |l| {
+                l.games[0].hidden = true;
+                Ok(())
+            })
+            .unwrap();
+        assert!(Library::load(&path).unwrap().games[0].hidden);
     }
 }

@@ -30,6 +30,7 @@ enum Filter {
     Favorites,
     Pc,
     Steam,
+    Hidden,
 }
 #[derive(Default)]
 struct Draft {
@@ -123,6 +124,13 @@ impl Launcher {
             .iter()
             .enumerate()
             .filter(|(_, g)| {
+                if self.filter == Filter::Hidden {
+                    if !g.hidden {
+                        return false;
+                    }
+                } else if g.hidden {
+                    return false;
+                }
                 g.name.to_lowercase().contains(&query)
                     && (!self.installed_only || g.installed != Some(false))
                     && match self.filter {
@@ -130,6 +138,7 @@ impl Launcher {
                         Filter::Favorites => g.favorite,
                         Filter::Pc => matches!(g.target, Target::Executable { .. }),
                         Filter::Steam => matches!(g.target, Target::Steam { .. }),
+                        Filter::Hidden => true,
                     }
             })
             .map(|(i, _)| i)
@@ -226,6 +235,7 @@ impl Launcher {
                                     last_launched: None,
                                     cover: game.cover,
                                     installed: Some(game.installed),
+                                    hidden: false,
                                 })?;
                                 added += 1;
                             }
@@ -375,16 +385,20 @@ impl Launcher {
                     (Filter::Favorites, "Favorites", Icon::Heart),
                     (Filter::Pc, "PC games", Icon::Pc),
                     (Filter::Steam, "Steam", Icon::Steam),
+                    (Filter::Hidden, "Hidden", Icon::Close),
                 ] {
                     let count = self
                         .library
                         .games
                         .iter()
                         .filter(|g| match filter {
-                            Filter::All => true,
-                            Filter::Favorites => g.favorite,
-                            Filter::Pc => matches!(g.target, Target::Executable { .. }),
-                            Filter::Steam => matches!(g.target, Target::Steam { .. }),
+                            Filter::All => !g.hidden,
+                            Filter::Favorites => !g.hidden && g.favorite,
+                            Filter::Pc => {
+                                !g.hidden && matches!(g.target, Target::Executable { .. })
+                            }
+                            Filter::Steam => !g.hidden && matches!(g.target, Target::Steam { .. }),
+                            Filter::Hidden => g.hidden,
                         })
                         .count();
                     let active = self.filter == filter;
@@ -474,6 +488,7 @@ impl Launcher {
                 Filter::Favorites => "Favorites",
                 Filter::Pc => "PC games",
                 Filter::Steam => "Steam",
+                Filter::Hidden => "Hidden",
             };
             ui.menu_button(heading(label, 20.0), |ui| {
                 for (value, label) in [
@@ -481,6 +496,7 @@ impl Launcher {
                     (Filter::Favorites, "Favorites"),
                     (Filter::Pc, "PC games"),
                     (Filter::Steam, "Steam"),
+                    (Filter::Hidden, "Hidden"),
                 ] {
                     if ui.selectable_label(self.filter == value, label).clicked() {
                         self.filter = value;
@@ -545,8 +561,12 @@ impl Launcher {
                 let (rect, _) = ui.allocate_exact_size(Vec2::new(240.0, 90.0), Sense::hover());
                 empty_mark(ui.painter(), rect);
                 ui.label(
-                    RichText::new("Try a different search or another collection.")
-                        .color(colors.muted),
+                    RichText::new(if self.filter == Filter::Hidden {
+                        "Hidden Steam games live here. Hide a game to declutter without losing it."
+                    } else {
+                        "Try a different search or another collection."
+                    })
+                    .color(colors.muted),
                 );
                 if ui.button("Show all games").clicked() {
                     self.query.clear();
@@ -849,6 +869,9 @@ Pick something you love. Press play.",
                             fitted_text(ui.painter(), rect, &game.name, display(23.0), colors.text);
                             ui.horizontal(|ui| {
                                 badge(ui, game.source(), art::color(&game.name));
+                                if game.hidden {
+                                    badge(ui, "Hidden", colors.muted);
+                                }
                                 ui.label(
                                     RichText::new(if game.installed == Some(false) {
                                         "Not installed"
@@ -946,7 +969,21 @@ Pick something you love. Press play.",
                 }
                 ui.close();
             }
-            if ui.button("Remove from library").clicked() {
+            if game.hidden {
+                if ui.button("Restore to library").clicked() {
+                    let result = self.library.change(&self.path, |l| {
+                        l.games[i].hidden = false;
+                        Ok(())
+                    });
+                    self.result(result, "Game restored to your library");
+                    ui.close();
+                }
+            } else if matches!(game.target, Target::Steam { .. }) {
+                if ui.button("Hide from library").clicked() {
+                    self.remove = true;
+                    ui.close();
+                }
+            } else if ui.button("Remove from library").clicked() {
                 self.remove = true;
                 ui.close();
             }
@@ -1067,6 +1104,7 @@ Pick something you love. Press play.",
                     last_launched: None,
                     cover: None,
                     installed: None,
+                    hidden: false,
                 };
                 launch::plan(&game)?;
                 let editing = d.editing;
@@ -1080,6 +1118,7 @@ Pick something you love. Press play.",
                             last_launched: l.games[i].last_launched,
                             cover: l.games[i].cover.clone(),
                             installed: l.games[i].installed,
+                            hidden: l.games[i].hidden,
                             ..game
                         };
                     } else {
@@ -1102,27 +1141,54 @@ Pick something you love. Press play.",
             self.draft = None;
         }
         if self.remove {
+            let hiding = self
+                .selected
+                .and_then(|i| self.library.games.get(i))
+                .is_some_and(|g| !g.hidden && matches!(g.target, Target::Steam { .. }));
             egui::Modal::new(egui::Id::new("remove")).show(ctx, |ui| {
-                ui.label(heading("Remove this game?", 24.0));
-                ui.label("Only the library entry is removed. Your game files stay in place.");
-                ui.horizontal(|ui| {
-                    if ui.button("Remove").clicked() {
-                        if let Some(i) = self.selected {
-                            let result = self.library.change(&self.path, |l| {
-                                l.games.remove(i);
-                                Ok(())
-                            });
-                            if result.is_ok() {
-                                self.selected = None;
+                if hiding {
+                    ui.label(heading("Hide this game?", 24.0));
+                    ui.label("It moves to Hidden. You can restore it anytime from the Hidden collection.");
+                    ui.horizontal(|ui| {
+                        if ui.button("Hide").clicked() {
+                            if let Some(i) = self.selected {
+                                let result = self.library.change(&self.path, |l| {
+                                    l.games[i].hidden = true;
+                                    Ok(())
+                                });
+                                if result.is_ok() {
+                                    self.selected = None;
+                                }
+                                self.result(result, "Game hidden");
                             }
-                            self.result(result, "Game removed");
+                            self.remove = false;
                         }
-                        self.remove = false;
-                    }
-                    if ui.button("Cancel").clicked() {
-                        self.remove = false;
-                    }
-                });
+                        if ui.button("Cancel").clicked() {
+                            self.remove = false;
+                        }
+                    });
+                } else {
+                    ui.label(heading("Remove this game?", 24.0));
+                    ui.label("Only the library entry is removed. Your game files stay in place.");
+                    ui.horizontal(|ui| {
+                        if ui.button("Remove").clicked() {
+                            if let Some(i) = self.selected {
+                                let result = self.library.change(&self.path, |l| {
+                                    l.games.remove(i);
+                                    Ok(())
+                                });
+                                if result.is_ok() {
+                                    self.selected = None;
+                                }
+                                self.result(result, "Game removed");
+                            }
+                            self.remove = false;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            self.remove = false;
+                        }
+                    });
+                }
             });
         }
     }
@@ -1323,6 +1389,7 @@ mod tests {
                             last_launched: None,
                             cover: None,
                             installed: None,
+                            hidden: false,
                         })
                         .collect(),
                 };
@@ -1357,6 +1424,7 @@ mod tests {
                     last_launched: None,
                     cover: None,
                     installed: None,
+                    hidden: false,
                 })
                 .collect(),
         };
@@ -1414,6 +1482,7 @@ mod tests {
                         last_launched: None,
                         cover: None,
                         installed: Some(false),
+                        hidden: false,
                     }];
                     let layout = &mut app.workspace.current_mut().layout;
                     layout.navigation = navigation;
@@ -1459,6 +1528,7 @@ mod tests {
             last_launched: Some(100),
             cover: Some(dir.path().join("my-cover.png")),
             installed: Some(true),
+            hidden: false,
         });
         let (tx, rx) = mpsc::channel();
         app.scan = Some(rx);
@@ -1494,6 +1564,7 @@ mod tests {
                 last_launched: None,
                 cover: None,
                 installed: None,
+                hidden: false,
             },
             Game {
                 name: "Moon Racer".into(),
@@ -1502,6 +1573,7 @@ mod tests {
                 last_launched: None,
                 cover: None,
                 installed: None,
+                hidden: false,
             },
         ];
         app.query = "MOON".into();
@@ -1513,6 +1585,72 @@ mod tests {
         app.library.games[1].installed = Some(false);
         assert_eq!(app.visible(), vec![0, 1]);
         app.installed_only = true;
+        assert_eq!(app.visible(), vec![0]);
+    }
+    #[test]
+    fn hidden_steam_games_live_in_the_hidden_collection() {
+        let ctx = egui::Context::default();
+        let mut app =
+            Launcher::from_library(&ctx, Library::default(), PathBuf::from("unused.json"));
+        app.library.games = vec![
+            Game {
+                name: "Shown Steam".into(),
+                target: Target::Steam { app_id: 10 },
+                favorite: false,
+                last_launched: None,
+                cover: None,
+                installed: Some(true),
+                hidden: false,
+            },
+            Game {
+                name: "Hidden Steam".into(),
+                target: Target::Steam { app_id: 20 },
+                favorite: false,
+                last_launched: None,
+                cover: None,
+                installed: Some(true),
+                hidden: true,
+            },
+        ];
+        app.filter = Filter::All;
+        assert_eq!(app.visible(), vec![0]);
+        app.filter = Filter::Steam;
+        assert_eq!(app.visible(), vec![0]);
+        app.filter = Filter::Hidden;
+        assert_eq!(app.visible(), vec![1]);
+    }
+    #[test]
+    fn steam_resync_keeps_hidden_games_hidden() {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir().unwrap();
+        let mut app =
+            Launcher::from_library(&ctx, Library::default(), dir.path().join("library.json"));
+        app.library.games.push(Game {
+            name: "Hidden Steam".into(),
+            target: Target::Steam { app_id: 10 },
+            favorite: false,
+            last_launched: None,
+            cover: None,
+            installed: Some(true),
+            hidden: true,
+        });
+        let (tx, rx) = mpsc::channel();
+        app.scan = Some(rx);
+        tx.send(Ok(steam::ImportResult {
+            games: vec![steam::SteamGame {
+                app_id: 10,
+                name: "Hidden Steam".into(),
+                installed: true,
+                cover: None,
+            }],
+            warnings: vec![],
+        }))
+        .unwrap();
+        app.poll();
+        assert!(app.library.games[0].hidden);
+        app.filter = Filter::All;
+        assert!(app.visible().is_empty());
+        app.filter = Filter::Hidden;
         assert_eq!(app.visible(), vec![0]);
     }
 }
