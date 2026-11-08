@@ -1,16 +1,17 @@
 # The Launcher
 
-A Windows game launcher with a console feel: a midnight library, cartridge-style covers, and one place to press Play. Inspired by Playnite’s unified library and [BoxShelf’s](https://github.com/sassiestrhihno/boxshelf-beta) tactile shelves. This is an independent implementation; no source or artwork is copied from either project.
+A native Rust game launcher whose workspace is arranged by its user. Move panels, choose grid/list/shelf views, and save your own layouts and colors. Inspired by Playnite’s unified library and [BoxShelf’s](https://github.com/sassiestrhihno/boxshelf-beta) tactile shelves. This is an independent implementation; no source or artwork is copied from either project.
 
 **Status: early foundation, not a packaged release.** Application logic and UI are Rust. Bun provides convenient development commands; the built application does not require Bun, Node, a browser, or a webview.
 
-![The Launcher native library](docs/screenshots/library-empty.png)
+The bundled skin is a starting layout. Use **Customize** to build yours.
 
 ## What works
 
 - Add a local game, choose its executable, name it, and set arguments and a working directory.
 - Launch games, edit launch options, favorite entries, search, and filter by source.
-- Import installed Steam games from a selected Steam installation and its additional libraries. Existing Steam entries are preserved. Launch through Steam’s registered URI handler.
+- Detect Steam automatically, import installed games across libraries, and optionally merge owned/uninstalled games through the official account API. On Windows, launch/install through the Steam client.
+- Arrange navigation/details/tools panels, choose grid/list/shelf views, edit colors, and save named layouts. The launcher owns its skinnable window frame.
 - Persist a local JSON library with atomic replacement and a single-instance lock.
 - Choose local PNG/JPEG cover art for any game, with original generated art as a fallback.
 - Browse with mouse or arrow keys, press Enter to play, and toggle full screen with F11. Tab navigates controls.
@@ -36,9 +37,9 @@ Linux is a development host, not a supported release target. Install C/C++ build
 1. Select **Add game**, then **Browse…**, and choose a game’s `.exe`.
 2. Give it a name. Arguments go one per line: `--profile` and `My Profile` are two lines. Do not wrap arguments containing spaces in quotes. Leave the working directory empty to use the executable’s folder.
 3. Save, select the tile, and press **Play**. A launch request means the OS accepted the process/URI request, not that the game finished loading.
-4. For Steam, select **Import Steam** and choose the Steam installation folder containing `steamapps`, usually `C:\Program Files (x86)\Steam`. The importer also reads `steamapps/libraryfolders.vdf` for other libraries. Steam must be installed and its `steam://` handler registered to launch an imported game. No Steam login or Web API key is used.
+4. For installed Steam games, select **Import Steam → Import library**. Windows detects Steam through its registry path; use the optional override if needed. To include owned, uninstalled games, provide SteamID64 and a personal API key for that import. Read [Steam integration](docs/steam-integration.md) for details and parity limits.
 
-Import is additive. It does not remove uninstalled games or overwrite your existing names/favorites. Steam manifests can include tools or DLC; this first importer does not query Steam’s catalogue to distinguish them. Disconnecting a drive skips that additional library. A malformed manifest aborts the import with a path-specific error and leaves the library unchanged.
+Import is additive. It does not remove uninstalled games or overwrite your existing names/favorites. Steam manifests can include tools or DLC; this first importer does not query Steam’s catalogue to distinguish them. Disconnecting a drive skips that additional library. Malformed manifests produce warnings while valid entries still import. An unusable primary root or failed account request leaves the library unchanged. Refresh through Import Steam after Steam finishes an install/uninstall.
 
 Removing an entry only removes it from this launcher, never from disk or Steam. Executables run with the launcher’s normal user permissions; add programs you trust.
 
@@ -50,7 +51,9 @@ Back up `library.json` before manual edits. Close the app first. If JSON is dama
 
 ## Project notes
 
-- [Native visual system and cover art](docs/design.md)
+- [Visual layout editor and skinnable frame](docs/customization.md)
+- [Steam integration and Playnite reference](docs/steam-integration.md)
+- [Bundled visual system and cover art](docs/design.md)
 - [Architecture and decisions](docs/architecture.md)
 - [Development and validation](docs/development.md)
 - [Roadmap](docs/roadmap.md)

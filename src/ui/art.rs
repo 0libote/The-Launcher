@@ -18,6 +18,7 @@ fn seed(name: &str) -> u32 {
 
 /// Original vector cover labels. Their colors stay tied to the title, not its shelf index.
 pub fn cover(p: &egui::Painter, rect: Rect, name: &str) {
+    let colors = palette(p.ctx());
     let p = p.with_clip_rect(rect);
     let accent = color(name);
     let s = rect.width() / 180.0;
@@ -51,7 +52,7 @@ pub fn cover(p: &egui::Painter, rect: Rect, name: &str) {
             }
             p.add(egui::Shape::convex_polygon(
                 vec![at(0.0, 190.0), at(70.0, 80.0), at(150.0, 230.0)],
-                SURFACE,
+                colors.surface,
                 Stroke::NONE,
             ));
         }
@@ -71,7 +72,7 @@ pub fn cover(p: &egui::Painter, rect: Rect, name: &str) {
     p.rect_filled(
         Rect::from_min_size(rect.min, Vec2::new(9.0 * s, rect.height())),
         2.0,
-        BG.gamma_multiply(0.5),
+        colors.background.gamma_multiply(0.5),
     );
     p.line_segment(
         [at(17.0, 20.0), at(42.0, 20.0)],
@@ -80,7 +81,7 @@ pub fn cover(p: &egui::Painter, rect: Rect, name: &str) {
     let mut job = egui::text::LayoutJob::simple(
         name.into(),
         display(21.0 * s),
-        TEXT,
+        colors.text,
         rect.width() - 38.0 * s,
     );
     job.wrap.max_rows = 2;
@@ -94,22 +95,23 @@ pub fn cover(p: &egui::Painter, rect: Rect, name: &str) {
             rect.right_bottom(),
         ),
         0.0,
-        BG.gamma_multiply(0.9),
+        colors.background.gamma_multiply(0.9),
     );
-    p.galley(base, galley, TEXT);
+    p.galley(base, galley, colors.text);
 }
 
 pub fn welcome(p: &egui::Painter, rect: Rect) {
+    let colors = palette(p.ctx());
     let p = p.with_clip_rect(rect);
     let s = (rect.width() / 420.0).min(rect.height() / 320.0);
     let origin = rect.center() - Vec2::new(210.0, 160.0) * s;
     let at = |x, y| origin + Vec2::new(x, y) * s;
     let ground = Rect::from_center_size(at(218.0, 276.0), Vec2::new(330.0, 26.0) * s);
-    p.rect_filled(ground, 13.0 * s, BG.gamma_multiply(0.55));
+    p.rect_filled(ground, 13.0 * s, colors.background.gamma_multiply(0.55));
     for (x, y, w, h, col) in [
         (42.0, 81.0, 100.0, 161.0, LILAC),
-        (261.0, 95.0, 103.0, 163.0, CORAL),
-        (133.0, 39.0, 137.0, 220.0, MINT),
+        (261.0, 95.0, 103.0, 163.0, colors.accent),
+        (133.0, 39.0, 137.0, 220.0, colors.selection),
     ] {
         let r = Rect::from_min_size(at(x, y), Vec2::new(w, h) * s);
         p.add(egui::Shape::convex_polygon(
@@ -126,7 +128,7 @@ pub fn welcome(p: &egui::Painter, rect: Rect) {
         p.rect_filled(
             r.translate(Vec2::new(0.0, 7.0) * s),
             8.0 * s,
-            BG.gamma_multiply(0.4),
+            colors.background.gamma_multiply(0.4),
         );
         p.rect_filled(r, 7.0 * s, col.gamma_multiply(0.5));
         p.rect_stroke(
@@ -141,12 +143,12 @@ pub fn welcome(p: &egui::Painter, rect: Rect) {
         p.circle_stroke(
             c,
             w * 0.24 * s,
-            Stroke::new(2.0 * s, BG.gamma_multiply(0.35)),
+            Stroke::new(2.0 * s, colors.background.gamma_multiply(0.35)),
         );
         p.circle_stroke(
             c,
             w * 0.17 * s,
-            Stroke::new(2.0 * s, BG.gamma_multiply(0.35)),
+            Stroke::new(2.0 * s, colors.background.gamma_multiply(0.35)),
         );
         p.add(egui::Shape::convex_polygon(
             vec![
@@ -154,7 +156,7 @@ pub fn welcome(p: &egui::Painter, rect: Rect) {
                 c + Vec2::new(15.0, 0.0) * s,
                 c + Vec2::new(-8.0, 13.0) * s,
             ],
-            BG,
+            colors.background,
             Stroke::NONE,
         ));
         p.rect_filled(
@@ -163,7 +165,7 @@ pub fn welcome(p: &egui::Painter, rect: Rect) {
                 Vec2::new(label.width(), 31.0 * s),
             ),
             0.0,
-            TEXT.gamma_multiply(0.85),
+            colors.text.gamma_multiply(0.85),
         );
         for i in 0..4 {
             let x = r.left() + (16.0 + i as f32 * 7.0) * s;
@@ -181,11 +183,11 @@ pub fn welcome(p: &egui::Painter, rect: Rect) {
         let c = at(x, y);
         p.line_segment(
             [c - Vec2::X * size * s, c + Vec2::X * size * s],
-            Stroke::new(1.5 * s, MUTED),
+            Stroke::new(1.5 * s, colors.muted),
         );
         p.line_segment(
             [c - Vec2::Y * size * s, c + Vec2::Y * size * s],
-            Stroke::new(1.5 * s, MUTED),
+            Stroke::new(1.5 * s, colors.muted),
         );
     }
     if s >= 0.75 {
@@ -194,7 +196,7 @@ pub fn welcome(p: &egui::Painter, rect: Rect) {
             egui::Align2::CENTER_CENTER,
             "A little shelf. A lot of possibilities.",
             FontId::proportional(11.0 * s),
-            MUTED,
+            colors.muted,
         );
     }
 }

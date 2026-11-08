@@ -6,6 +6,12 @@ This is a direction, not a release promise. Finish and validate each slice befor
 
 Native Rust library UI; manual executable entries and launch options; safe direct process launching; local persistence; favorites and search; source filters; installed Steam import and URI launching; setup, architecture, and data documentation.
 
+## User-owned presentation — implemented foundation
+
+Visual layout editor with panel docking, grid/list/shelf views, sizes, colors, named layouts, atomic Save/Cancel, and a launcher-owned frame. See `customization.md` for the supported regions and current limits.
+
+Steam now follows the registry/manifests plus optional Web API account-import approach examined in Playnite. Browser login, family sharing, and session/install watchers remain future work.
+
 ## Next: make it pleasant to use daily
 
 - Validate on Windows hardware and add Windows CI, including an actual release build.

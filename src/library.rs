@@ -29,6 +29,8 @@ pub struct Game {
     pub last_launched: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cover: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installed: Option<bool>,
 }
 
 impl Game {
@@ -154,6 +156,7 @@ mod tests {
             favorite: false,
             last_launched: None,
             cover: None,
+            installed: None,
         }
     }
     #[test]

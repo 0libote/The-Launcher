@@ -15,11 +15,45 @@ pub const CORAL: Color32 = Color32::from_rgb(255, 151, 124);
 pub const MINT: Color32 = Color32::from_rgb(159, 222, 204);
 pub const LILAC: Color32 = Color32::from_rgb(183, 175, 224);
 
+#[derive(Clone, Copy)]
+pub struct Palette {
+    pub background: Color32,
+    pub navigation: Color32,
+    pub surface: Color32,
+    pub raised: Color32,
+    pub text: Color32,
+    pub muted: Color32,
+    pub faint: Color32,
+    pub line: Color32,
+    pub accent: Color32,
+    pub selection: Color32,
+}
+impl Default for Palette {
+    fn default() -> Self {
+        Self {
+            background: BG,
+            navigation: RAIL,
+            surface: SURFACE,
+            raised: RAISED,
+            text: TEXT,
+            muted: MUTED,
+            faint: FAINT,
+            line: LINE,
+            accent: CORAL,
+            selection: MINT,
+        }
+    }
+}
+pub fn palette(ctx: &egui::Context) -> Palette {
+    ctx.data(|d| d.get_temp(egui::Id::new("active_skin")))
+        .unwrap_or_default()
+}
+
 pub fn display(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name("display".into()))
 }
 pub fn heading(text: impl Into<String>, size: f32) -> RichText {
-    RichText::new(text).font(display(size)).color(TEXT)
+    RichText::new(text).font(display(size))
 }
 
 pub fn install(ctx: &egui::Context) {
@@ -43,32 +77,49 @@ pub fn install(ctx: &egui::Context) {
         .families
         .insert(FontFamily::Name("display".into()), display_fonts);
     ctx.set_fonts(fonts);
+    apply(ctx, &the_launcher::workspace::Skin::default());
+}
+
+pub fn apply(ctx: &egui::Context, skin: &the_launcher::workspace::Skin) {
+    let colors = Palette {
+        background: Color32::from_rgb(skin.background[0], skin.background[1], skin.background[2]),
+        navigation: Color32::from_rgb(skin.navigation[0], skin.navigation[1], skin.navigation[2]),
+        surface: Color32::from_rgb(skin.surface[0], skin.surface[1], skin.surface[2]),
+        raised: Color32::from_rgb(skin.raised[0], skin.raised[1], skin.raised[2]),
+        text: Color32::from_rgb(skin.text[0], skin.text[1], skin.text[2]),
+        muted: Color32::from_rgb(skin.muted[0], skin.muted[1], skin.muted[2]),
+        faint: Color32::from_rgb(skin.faint[0], skin.faint[1], skin.faint[2]),
+        line: Color32::from_rgb(skin.line[0], skin.line[1], skin.line[2]),
+        accent: Color32::from_rgb(skin.accent[0], skin.accent[1], skin.accent[2]),
+        selection: Color32::from_rgb(skin.selection[0], skin.selection[1], skin.selection[2]),
+    };
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new("active_skin"), colors));
     let mut style = (*ctx.style()).clone();
     style.visuals = egui::Visuals::dark();
-    style.visuals.panel_fill = BG;
-    style.visuals.window_fill = SURFACE;
-    style.visuals.extreme_bg_color = RAIL;
-    style.visuals.override_text_color = Some(TEXT);
-    style.visuals.selection.bg_fill = MINT.gamma_multiply(0.25);
-    style.visuals.selection.stroke = Stroke::new(1.0_f32, MINT);
+    style.visuals.panel_fill = colors.background;
+    style.visuals.window_fill = colors.surface;
+    style.visuals.extreme_bg_color = colors.navigation;
+    style.visuals.override_text_color = Some(colors.text);
+    style.visuals.selection.bg_fill = colors.selection.gamma_multiply(0.25);
+    style.visuals.selection.stroke = Stroke::new(1.0_f32, colors.selection);
     style.visuals.window_corner_radius = 18.into();
-    style.visuals.window_stroke = Stroke::new(1.0_f32, LINE);
+    style.visuals.window_stroke = Stroke::new(1.0_f32, colors.line);
     for widget in [
         &mut style.visuals.widgets.inactive,
         &mut style.visuals.widgets.hovered,
         &mut style.visuals.widgets.active,
     ] {
         widget.corner_radius = 8.into();
-        widget.fg_stroke = Stroke::new(1.0_f32, TEXT);
+        widget.fg_stroke = Stroke::new(1.0_f32, colors.text);
     }
-    style.visuals.widgets.inactive.bg_fill = RAISED;
-    style.visuals.widgets.inactive.weak_bg_fill = RAISED;
-    style.visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, LINE);
-    style.visuals.widgets.hovered.bg_fill = LINE;
-    style.visuals.widgets.hovered.weak_bg_fill = LINE;
-    style.visuals.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, MINT);
-    style.visuals.widgets.active.bg_fill = RAISED;
-    style.visuals.widgets.active.bg_stroke = Stroke::new(2.0_f32, MINT);
+    style.visuals.widgets.inactive.bg_fill = colors.raised;
+    style.visuals.widgets.inactive.weak_bg_fill = colors.raised;
+    style.visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, colors.line);
+    style.visuals.widgets.hovered.bg_fill = colors.line;
+    style.visuals.widgets.hovered.weak_bg_fill = colors.line;
+    style.visuals.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, colors.selection);
+    style.visuals.widgets.active.bg_fill = colors.raised;
+    style.visuals.widgets.active.bg_stroke = Stroke::new(2.0_f32, colors.selection);
     style.spacing.item_spacing = Vec2::new(12.0, 12.0);
     style.spacing.button_padding = Vec2::new(16.0, 12.0);
     style.spacing.interact_size.y = 40.0;
@@ -95,7 +146,6 @@ pub enum Icon {
     Heart,
     Pc,
     Steam,
-    Folder,
     Plus,
     Search,
     Play,
@@ -128,20 +178,6 @@ pub fn icon(p: &egui::Painter, center: Pos2, kind: Icon, size: f32, color: Color
             rect(-8.0, -7.0, 16.0, 11.0);
             line(at(0.0, 4.0), at(0.0, 8.0));
             line(at(-4.0, 8.0), at(4.0, 8.0));
-        }
-        Icon::Folder => {
-            p.add(egui::Shape::closed_line(
-                vec![
-                    at(-8.0, -4.0),
-                    at(-8.0, -7.0),
-                    at(-2.0, -7.0),
-                    at(1.0, -4.0),
-                    at(8.0, -4.0),
-                    at(8.0, 7.0),
-                    at(-8.0, 7.0),
-                ],
-                stroke,
-            ));
         }
         Icon::Heart => {
             p.add(egui::Shape::closed_line(
@@ -195,10 +231,19 @@ pub fn icon(p: &egui::Painter, center: Pos2, kind: Icon, size: f32, color: Color
 }
 
 pub fn button(ui: &mut Ui, label: &str, kind: Icon, primary: bool) -> Response {
-    let color = if primary { BG } else { TEXT };
+    let colors = palette(ui.ctx());
+    let color = if primary {
+        colors.background
+    } else {
+        colors.text
+    };
     let response = ui.add(
         egui::Button::new(RichText::new(format!("       {label}")).color(color))
-            .fill(if primary { CORAL } else { RAISED })
+            .fill(if primary {
+                colors.accent
+            } else {
+                colors.raised
+            })
             .corner_radius(8)
             .min_size(Vec2::new(0.0, 44.0)),
     );
@@ -213,7 +258,7 @@ pub fn button(ui: &mut Ui, label: &str, kind: Icon, primary: bool) -> Response {
         ui.painter().rect_stroke(
             response.rect.expand(3.0),
             10.0,
-            Stroke::new(2.0_f32, MINT),
+            Stroke::new(2.0_f32, colors.selection),
             StrokeKind::Outside,
         );
     }
@@ -221,13 +266,18 @@ pub fn button(ui: &mut Ui, label: &str, kind: Icon, primary: bool) -> Response {
 }
 
 pub fn icon_button(ui: &mut Ui, kind: Icon, label: &str) -> Response {
+    let colors = palette(ui.ctx());
     let response = ui.add(egui::Button::new("").min_size(Vec2::splat(40.0)));
     icon(
         ui.painter(),
         response.rect.center(),
         kind,
         18.0,
-        if response.hovered() { TEXT } else { MUTED },
+        if response.hovered() {
+            colors.text
+        } else {
+            colors.muted
+        },
     );
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
     response.on_hover_text(label)
@@ -246,47 +296,26 @@ pub fn badge(ui: &mut Ui, text: &str, color: Color32) {
         .galley(rect.center() - galley.size() / 2.0, galley, color);
 }
 
-pub fn logo(ui: &mut Ui) {
-    let (rect, _) = ui.allocate_exact_size(Vec2::splat(36.0), Sense::hover());
-    let p = ui.painter();
-    p.rect_filled(rect, 10.0, CORAL);
-    p.rect_stroke(
-        rect.shrink(9.0),
-        3.0,
-        Stroke::new(2.0_f32, BG),
-        StrokeKind::Inside,
-    );
-    p.line_segment(
-        [
-            rect.center() + Vec2::new(-3.0, -4.0),
-            rect.center() + Vec2::new(-3.0, 4.0),
-        ],
-        Stroke::new(2.0_f32, BG),
-    );
-    p.line_segment(
-        [
-            rect.center() + Vec2::new(-3.0, 4.0),
-            rect.center() + Vec2::new(4.0, 4.0),
-        ],
-        Stroke::new(2.0_f32, BG),
-    );
-}
-
 pub fn key_hint(ui: &mut Ui, key: &str, label: &str) {
+    let colors = palette(ui.ctx());
     let galley = ui
         .painter()
-        .layout_no_wrap(key.into(), FontId::proportional(10.0), MUTED);
+        .layout_no_wrap(key.into(), FontId::proportional(10.0), colors.muted);
     let (rect, response) =
         ui.allocate_exact_size(Vec2::new(galley.size().x + 12.0, 22.0), Sense::hover());
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Label, true, format!("{key}: {label}"))
     });
-    ui.painter().rect_filled(rect, 4.0, SURFACE);
+    ui.painter().rect_filled(rect, 4.0, colors.surface);
+    ui.painter().rect_stroke(
+        rect,
+        4.0,
+        Stroke::new(1.0_f32, colors.line),
+        StrokeKind::Inside,
+    );
     ui.painter()
-        .rect_stroke(rect, 4.0, Stroke::new(1.0_f32, LINE), StrokeKind::Inside);
-    ui.painter()
-        .galley(rect.center() - galley.size() / 2.0, galley, MUTED);
-    ui.label(RichText::new(label).size(11.0).color(FAINT));
+        .galley(rect.center() - galley.size() / 2.0, galley, colors.muted);
+    ui.label(RichText::new(label).size(11.0).color(colors.faint));
 }
 
 pub fn fitted_text(p: &egui::Painter, rect: Rect, text: &str, font: FontId, color: Color32) {
@@ -310,19 +339,38 @@ pub fn source_icon(source: &str) -> Icon {
 }
 
 pub fn empty_mark(p: &egui::Painter, rect: Rect) {
-    icon(p, rect.center(), Icon::Search, 32.0, FAINT);
+    let colors = palette(p.ctx());
+    icon(p, rect.center(), Icon::Search, 32.0, colors.faint);
     p.text(
         rect.center() + Vec2::new(0.0, 45.0),
         Align2::CENTER_CENTER,
         "No games found",
         display(24.0),
-        TEXT,
+        colors.text,
     );
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn active_skin_controls_painting_and_standard_widgets() {
+        let ctx = egui::Context::default();
+        let skin = the_launcher::workspace::Skin {
+            background: [201, 202, 203],
+            text: [1, 2, 3],
+            accent: [40, 50, 60],
+            ..Default::default()
+        };
+        apply(&ctx, &skin);
+        let colors = palette(&ctx);
+        assert_eq!(colors.background, Color32::from_rgb(201, 202, 203));
+        assert_eq!(colors.accent, Color32::from_rgb(40, 50, 60));
+        assert_eq!(
+            ctx.style().visuals.override_text_color,
+            Some(Color32::from_rgb(1, 2, 3))
+        );
+    }
     #[test]
     fn small_text_colors_meet_normal_text_contrast() {
         let luminance = |color: Color32| {

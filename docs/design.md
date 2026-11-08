@@ -14,9 +14,12 @@ The launcher takes its cues from console collection screens and physical game ca
 | `MINT` | `#9fdecc` | Active collection, keyboard focus, selection |
 | `LILAC` | `#b7afe0` | Original fallback artwork |
 
-Manrope Regular is the body face; Oxanium SemiBold gives headings a squared console character. Both are embedded under SIL OFL licenses; sources and regeneration instructions live in `assets/fonts/README.md`. The OS title bar remains native, so its accent color follows Windows preferences. A matching application icon replaces eframe’s default icon.
+Manrope Regular is the body face; Oxanium SemiBold gives headings a squared console character. Both are embedded under SIL OFL licenses; sources and regeneration instructions live in `assets/fonts/README.md`. The launcher owns its title bar and frame; their colors follow the active user skin. See [workspace customization](customization.md).
 
 ## Composition
+
+This describes the bundled starting layout. Navigation and details can move or be hidden, Tools can move, and the user can choose grid/list/shelf presentation and override colors in the visual editor. The renderer reads the saved workspace.
+
 
 A 208-point navigation rail holds the brand, source/favorite filters with real counts, and library-folder access. The main header owns Add and Steam import. The collection toolbar contains the current collection and search. A selected-game dock anchors the Play action below the responsive cover grid.
 
@@ -40,7 +43,7 @@ Headless egui tests check that empty and populated layouts fit the supported min
 
 ## Captures
 
-These are captures of the actual native application on a Linux virtual display, not web mockups. The populated screenshot uses an isolated synthetic fixture library and an original local image to exercise cover loading. These names and entries are not shipped to users.
+These historical captures show the earlier fixed-layout foundation before the visual editor/custom-frame change. They are native Linux captures, not web mockups; see customization.md for current behavior. The populated screenshot uses an isolated synthetic fixture library and an original local image to exercise cover loading. These names and entries are not shipped to users.
 
 ![Empty library at 1200 × 800](screenshots/library-empty.png)
 

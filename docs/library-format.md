@@ -38,6 +38,7 @@ The app owns `library.json`. Close it and back up the file before editing. Paths
 | `target.working_directory` | Optional folder for executable targets; null/omitted uses the executable’s parent. |
 | `target.app_id` | Positive 32-bit Steam application ID. |
 | `favorite` | Boolean, defaults to false when absent. |
+| `installed` | Optional boolean. Steam import sets it; false requests installation instead of launching. Null/absent preserves legacy launch behavior. |
 | `cover` | Optional local PNG/JPEG path, defaults to null/absent. Not copied; missing files use generated artwork. Older schema-1 libraries continue to load. |
 | `last_launched` | Optional Unix timestamp in seconds, defaults to null when absent. Records dispatch, not play duration. |
 

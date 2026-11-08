@@ -1,20 +1,166 @@
-use anyhow::{Context, Result, bail};
-use std::collections::{BTreeMap, HashMap};
+use anyhow::{Context, Result, anyhow, bail};
+use serde::Deserialize;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::time::Duration;
+
+/// Steamworks redistributable entry: a support package, never a game.
+const REDIST_APP_ID: u32 = 228_980;
+/// `StateFlags` bit marking a fully installed app.
+const FULLY_INSTALLED: u32 = 4;
+/// Official owned-games route, the same one upstream account import uses.
+const OWNED_GAMES_URL: &str = "https://api.steampowered.com/IPlayerService/GetOwnedGames/v0001/";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SteamGame {
     pub app_id: u32,
     pub name: String,
+    pub installed: bool,
+    pub cover: Option<std::path::PathBuf>,
 }
 
-/// Scan a user-chosen Steam installation folder for fully installed games.
+/// How to find Steam games. Everything is optional: `root` overrides
+/// auto-detection, while `account_id` plus `api_key` add the optional
+/// owned-games route for the current session only. The key is never stored
+/// and never appears in errors or warnings.
+#[derive(Default)]
+pub struct ImportOptions {
+    pub root: Option<PathBuf>,
+    pub account_id: Option<String>,
+    pub api_key: Option<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ImportResult {
+    pub games: Vec<SteamGame>,
+    pub warnings: Vec<String>,
+}
+
+/// Locate the Steam installation: the Windows registry on Windows, the
+/// usual home-directory locations elsewhere. An explicit
+/// [`ImportOptions::root`] bypasses this entirely.
+pub fn installation_path() -> Result<PathBuf> {
+    #[cfg(windows)]
+    {
+        windows_installation_path()
+    }
+    #[cfg(not(windows))]
+    {
+        unix_installation_path()
+    }
+}
+
+#[cfg(windows)]
+fn windows_installation_path() -> Result<PathBuf> {
+    let key = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER)
+        .open_subkey(r"Software\Valve\Steam")
+        .map_err(|_| anyhow!("Steam installation not found in the registry"))?;
+    let raw: String = key
+        .get_value("SteamPath")
+        .map_err(|_| anyhow!("Steam installation path is not set in the registry"))?;
+    let path = PathBuf::from(raw.replace('/', "\\"));
+    if path.is_dir() {
+        Ok(path)
+    } else {
+        Err(anyhow!("Steam installation folder is missing"))
+    }
+}
+
+#[cfg(not(windows))]
+fn unix_installation_path() -> Result<PathBuf> {
+    let home = directories::UserDirs::new()
+        .map(|user| user.home_dir().to_path_buf())
+        .filter(|home| !home.as_os_str().is_empty())
+        .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+        .ok_or_else(|| anyhow!("Cannot locate a home directory to find Steam"))?;
+    default_roots(&home)
+        .into_iter()
+        .find(|candidate| candidate.is_dir())
+        .ok_or_else(|| anyhow!("Steam installation not found in the usual Linux locations"))
+}
+
+/// Usual Steam roots below a home directory, in preference order.
+#[cfg(any(not(windows), test))]
+fn default_roots(home: &Path) -> Vec<PathBuf> {
+    vec![
+        home.join(".steam").join("steam"),
+        home.join(".local").join("share").join("Steam"),
+    ]
+}
+
+/// Local cached cover Steam keeps per app, if present. Never downloads:
+/// missing art simply stays `None`.
+fn cover_for(root: &Path, app_id: u32) -> Option<PathBuf> {
+    let cache = root.join("appcache").join("librarycache");
+    ["jpg", "png"]
+        .into_iter()
+        .map(|ext| cache.join(format!("{app_id}_library_600x900.{ext}")))
+        .find(|path| path.is_file())
+}
+
+/// Import Steam games: always the local installed scan, plus the optional
+/// owned-games route when both `account_id` (numeric Steam64 ID) and
+/// `api_key` are supplied. Malformed manifests become warnings, never a
+/// failed import; invalid account details fail instead of importing nothing.
+pub fn import(options: ImportOptions) -> Result<ImportResult> {
+    let root = match options.root {
+        Some(root) => root,
+        None => installation_path().context("Cannot find Steam automatically")?,
+    };
+    let (local, mut warnings) = collect_installed(&root)?;
+    let account = match (options.account_id, options.api_key) {
+        (None, None) => None,
+        (Some(id), Some(key)) => Some((id, key)),
+        (Some(_), None) | (None, Some(_)) => {
+            bail!("Steam account import needs both the Steam64 ID and the API key")
+        }
+    };
+    let Some((account_id, api_key)) = account else {
+        return Ok(ImportResult {
+            games: sorted(local.into_values().collect()),
+            warnings,
+        });
+    };
+    let steam_id = validate_account_id(&account_id)?;
+    let key = api_key.trim().to_string();
+    if key.is_empty() {
+        bail!("Steam API key is empty");
+    }
+    let (owned, skipped_blank) = fetch_owned_games(steam_id, &key)?;
+    if skipped_blank > 0 {
+        warnings.push(format!(
+            "Skipped {skipped_blank} owned entries without names"
+        ));
+    }
+    Ok(ImportResult {
+        games: merge_owned(&root, local, owned),
+        warnings,
+    })
+}
+
+/// Scan a Steam installation folder for fully installed games.
 ///
 /// Looks in `root/steamapps` plus any extra libraries listed in
 /// `root/steamapps/libraryfolders.vdf`, parses `appmanifest_*.acf` files,
-/// and returns de-duplicated games sorted by name.
+/// and returns de-duplicated installed games sorted by name. One malformed
+/// manifest is skipped; use [`import`] for the per-file warnings.
 pub fn scan(root: &Path) -> Result<Vec<SteamGame>> {
+    let (by_id, _) = collect_installed(root)?;
+    Ok(sorted(by_id.into_values().collect()))
+}
+
+fn sorted(mut games: Vec<SteamGame>) -> Vec<SteamGame> {
+    games.sort_by(|a, b| a.name.cmp(&b.name).then(a.app_id.cmp(&b.app_id)));
+    games
+}
+
+/// Local scan shared by [`scan`] and [`import`].
+///
+/// Fatal errors (an unusable root) abort; per-file and per-library problems
+/// become warnings so one bad manifest cannot hide the whole collection.
+fn collect_installed(root: &Path) -> Result<(HashMap<u32, SteamGame>, Vec<String>)> {
+    let mut warnings = Vec::new();
     if !root.is_dir() {
         bail!(
             "Invalid Steam folder '{}': it does not exist or is not a directory",
@@ -29,34 +175,62 @@ pub fn scan(root: &Path) -> Result<Vec<SteamGame>> {
         );
     }
 
-    let mut library_steamapps: Vec<PathBuf> = vec![primary_steamapps.clone()];
-    let mut seen_dirs: Vec<PathBuf> = vec![canonical_key(&primary_steamapps)];
-    for lib_root in library_roots(&primary_steamapps.join("libraryfolders.vdf"))? {
-        let steamapps = lib_root.join("steamapps");
-        // A library on a disconnected drive (or a Windows path fixture on
-        // Unix) simply contributes nothing; only the chosen root is required.
-        if !steamapps.is_dir() {
-            continue;
+    let mut libraries = vec![primary_steamapps.clone()];
+    let mut seen = vec![canonical_key(&primary_steamapps)];
+    match library_roots(&primary_steamapps.join("libraryfolders.vdf")) {
+        Ok(extra) => {
+            for lib_root in extra {
+                let steamapps = lib_root.join("steamapps");
+                if !steamapps.is_dir() {
+                    warnings.push(format!(
+                        "Skipping missing Steam library '{}'",
+                        lib_root.display()
+                    ));
+                    continue;
+                }
+                let key = canonical_key(&steamapps);
+                if !seen.contains(&key) {
+                    seen.push(key);
+                    libraries.push(steamapps);
+                }
+            }
         }
-        let key = canonical_key(&steamapps);
-        if !seen_dirs.contains(&key) {
-            seen_dirs.push(key);
-            library_steamapps.push(steamapps);
-        }
+        Err(error) => warnings.push(format!("Ignoring Steam libraries file: {error:#}")),
     }
 
     let mut by_id: HashMap<u32, SteamGame> = HashMap::new();
-    for steamapps in &library_steamapps {
-        for manifest_path in manifest_paths(steamapps)? {
-            if let Some(game) = parse_manifest(&manifest_path, steamapps)? {
-                by_id.entry(game.app_id).or_insert(game);
+    for (index, steamapps) in libraries.iter().enumerate() {
+        let paths = match manifest_paths(steamapps) {
+            Ok(paths) => paths,
+            Err(error) => {
+                if index == 0 {
+                    return Err(error);
+                }
+                warnings.push(format!("Skipping unreadable Steam library: {error:#}"));
+                continue;
+            }
+        };
+        for manifest_path in &paths {
+            let file_name = manifest_path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
+            match parse_manifest(manifest_path, steamapps) {
+                Ok(Some((app_id, name))) => {
+                    by_id.entry(app_id).or_insert_with(|| SteamGame {
+                        app_id,
+                        name,
+                        installed: true,
+                        cover: cover_for(root, app_id),
+                    });
+                }
+                Ok(None) => {}
+                Err(error) => warnings.push(format!("Skipping '{file_name}': {error:#}")),
             }
         }
     }
-
-    let mut games: Vec<SteamGame> = by_id.into_values().collect();
-    games.sort_by(|a, b| a.name.cmp(&b.name).then(a.app_id.cmp(&b.app_id)));
-    Ok(games)
+    Ok((by_id, warnings))
 }
 
 fn canonical_key(p: &Path) -> PathBuf {
@@ -69,7 +243,6 @@ fn canonical_key(p: &Path) -> PathBuf {
 ///
 /// Supports both the legacy format (`"1" "D:\\Lib"`) and the current format
 /// (`"1" { "path" "D:\\Lib" ... }`). Missing file means "primary only".
-/// A present-but-broken file is an error, not a silent empty scan.
 fn library_roots(vdf_path: &Path) -> Result<Vec<PathBuf>> {
     if !vdf_path.exists() {
         return Ok(Vec::new());
@@ -110,6 +283,7 @@ fn library_roots(vdf_path: &Path) -> Result<Vec<PathBuf>> {
 }
 
 /// Sorted `appmanifest_*.acf` files inside one `steamapps` directory.
+/// Temporary `*.tmp` copies Steam is still writing are skipped.
 fn manifest_paths(steamapps: &Path) -> Result<Vec<PathBuf>> {
     let entries = fs::read_dir(steamapps)
         .with_context(|| format!("Cannot list Steam apps in '{}'", steamapps.display()))?;
@@ -119,7 +293,11 @@ fn manifest_paths(steamapps: &Path) -> Result<Vec<PathBuf>> {
             .with_context(|| format!("Cannot list Steam apps in '{}'", steamapps.display()))?;
         let file_name = entry.file_name();
         let name = file_name.to_string_lossy();
-        if entry.path().is_file() && name.starts_with("appmanifest_") && name.ends_with(".acf") {
+        if entry.path().is_file()
+            && name.starts_with("appmanifest_")
+            && name.ends_with(".acf")
+            && !name.to_lowercase().ends_with(".tmp")
+        {
             paths.push(entry.path());
         }
     }
@@ -127,50 +305,47 @@ fn manifest_paths(steamapps: &Path) -> Result<Vec<PathBuf>> {
     Ok(paths)
 }
 
-/// Parse one manifest; `Ok(None)` means "present but not fully installed".
+/// Parse one manifest; `Ok(None)` means "present but not installed".
 ///
-/// Errors only when the file cannot be read or understood; filtering
-/// (StateFlags, missing install dir, appid 0) returns `Ok(None)`.
-fn parse_manifest(manifest_path: &Path, steamapps: &Path) -> Result<Option<SteamGame>> {
-    let text = fs::read_to_string(manifest_path)
-        .with_context(|| format!("Cannot read Steam manifest '{}'", manifest_path.display()))?;
-    let kv = parse_kv(&text)
-        .with_context(|| format!("Cannot parse Steam manifest '{}'", manifest_path.display()))?;
-    let ctx = || format!("Malformed Steam manifest '{}'", manifest_path.display());
+/// Errors describe skipped files for warnings; filtering (StateFlags,
+/// missing install dir, appid 0, the redistributable) returns `Ok(None)`.
+fn parse_manifest(manifest_path: &Path, steamapps: &Path) -> Result<Option<(u32, String)>> {
+    let text = fs::read_to_string(manifest_path).map_err(|_| anyhow!("cannot be read"))?;
+    let kv = parse_kv(&text).map_err(|_| anyhow!("cannot be parsed"))?;
 
     let state = match find_key_ci(&kv, "AppState") {
         Some(KvValue::Obj(map)) => map,
-        Some(_) => bail!(
-            "Malformed Steam manifest '{}': 'AppState' is not a section",
-            manifest_path.display()
-        ),
-        None => bail!(
-            "Malformed Steam manifest '{}': missing 'AppState' section",
-            manifest_path.display()
-        ),
+        _ => return Err(anyhow!("missing 'AppState' section")),
     };
 
     let app_id: u32 = match find_key_ci(state, "appid").and_then(|v| v.as_str()) {
-        Some(s) => s.trim().parse().with_context(|| {
-            format!(
-                "Malformed Steam manifest '{}': invalid 'appid'",
-                manifest_path.display()
-            )
-        })?,
-        None => return Err(anyhow::anyhow!(ctx())).with_context(|| "missing 'appid'"),
+        Some(raw) => raw.trim().parse().map_err(|_| anyhow!("invalid 'appid'"))?,
+        None => return Err(anyhow!("missing 'appid'")),
     };
-    if app_id == 0 {
+    if app_id == 0 || app_id == REDIST_APP_ID {
         return Ok(None);
     }
+
+    // Upstream falls back to `UserConfig/name` when `name` is blank.
     let name = match find_key_ci(state, "name").and_then(|v| v.as_str()) {
-        Some(s) if !s.trim().is_empty() => s.trim().to_string(),
-        _ => return Err(anyhow::anyhow!(ctx())).with_context(|| "missing 'name'"),
+        Some(raw) if !raw.trim().is_empty() => raw.trim().to_string(),
+        _ => match find_key_ci(state, "UserConfig")
+            .and_then(|v| v.as_obj())
+            .and_then(|config| find_key_ci(config, "name"))
+            .and_then(|v| v.as_str())
+        {
+            Some(raw) if !raw.trim().is_empty() => raw.trim().to_string(),
+            _ => return Err(anyhow!("missing 'name'")),
+        },
     };
 
     // Only fully installed entries: StateFlags bit 4. Missing/garbled flags
     // mean "not ready", not "broken manifest".
     let installed = match find_key_ci(state, "StateFlags").and_then(|v| v.as_str()) {
-        Some(s) => s.trim().parse::<u32>().is_ok_and(|flags| flags & 4 != 0),
+        Some(s) => s
+            .trim()
+            .parse::<u32>()
+            .is_ok_and(|flags| flags & FULLY_INSTALLED != 0),
         None => false,
     };
     if !installed {
@@ -191,7 +366,7 @@ fn parse_manifest(manifest_path: &Path, steamapps: &Path) -> Result<Option<Steam
         return Ok(None);
     }
 
-    Ok(Some(SteamGame { app_id, name }))
+    Ok(Some((app_id, name)))
 }
 
 /// Reject anything that could escape `steamapps/common`: absolute paths
@@ -230,6 +405,147 @@ fn installdir_is_safe(installdir: &str) -> bool {
 /// split on both separators and re-join as relative components.
 fn installdir_relative(installdir: &str) -> PathBuf {
     installdir.split(['/', '\\']).collect()
+}
+
+fn validate_account_id(raw: &str) -> Result<u64> {
+    match raw.trim().parse::<u64>() {
+        Ok(id) if id > 0 => Ok(id),
+        _ => Err(anyhow!(
+            "Invalid Steam account ID; expected the numeric Steam64 ID"
+        )),
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct OwnedEntry {
+    app_id: u32,
+    name: String,
+}
+
+fn fetch_owned_games(steam_id: u64, api_key: &str) -> Result<(Vec<OwnedEntry>, usize)> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|_| anyhow!("Cannot prepare the Steam account request"))?;
+    // The key travels only inside this request. Nothing below logs it or
+    // echoes it back inside an error.
+    let response = client
+        .get(OWNED_GAMES_URL)
+        .query(&[
+            ("key".to_owned(), api_key.to_owned()),
+            ("steamid".to_owned(), steam_id.to_string()),
+            ("include_appinfo".to_owned(), "1".to_owned()),
+            ("include_played_free_games".to_owned(), "1".to_owned()),
+            ("format".to_owned(), "json".to_owned()),
+        ])
+        .send()
+        .map_err(|_| {
+            anyhow!("Cannot reach the Steam account service; check the network and try again")
+        })?;
+    let status = response.status();
+    if !status.is_success() {
+        match status.as_u16() {
+            400 => bail!("Steam rejected the account ID; check the Steam64 ID and try again"),
+            401 | 403 => bail!("Steam rejected the API key; check the key and try again"),
+            429 => bail!("Steam is rate-limiting requests; wait a bit and try again"),
+            code => bail!("Steam account request failed (HTTP {code}); try again later"),
+        }
+    }
+    let mut text = String::new();
+    use std::io::Read;
+    response
+        .take(16 * 1024 * 1024 + 1)
+        .read_to_string(&mut text)
+        .map_err(|_| anyhow!("Cannot read the Steam account response"))?;
+    if text.len() > 16 * 1024 * 1024 {
+        bail!("Steam account response is too large");
+    }
+    parse_owned_json(&text)
+}
+
+#[derive(Debug, Deserialize)]
+struct OwnedPayload {
+    #[serde(default)]
+    response: OwnedInner,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct OwnedInner {
+    #[serde(default)]
+    games: Vec<OwnedRaw>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct OwnedRaw {
+    #[serde(default)]
+    appid: u32,
+    #[serde(default)]
+    name: String,
+}
+
+/// Parse an `IPlayerService/GetOwnedGames` body: names with `u32` app IDs,
+/// deduplicated, without the redistributable or nameless entries.
+///
+/// An empty result is an error, never a silent empty import: it means the
+/// profile is private, the account owns nothing visible, or the details do
+/// not grant access.
+fn parse_owned_json(text: &str) -> Result<(Vec<OwnedEntry>, usize)> {
+    let payload: OwnedPayload = serde_json::from_str(text)
+        .map_err(|_| anyhow!("Cannot understand the Steam account response"))?;
+    let mut seen = HashSet::new();
+    let mut entries = Vec::new();
+    let mut skipped_blank = 0;
+    for raw in payload.response.games {
+        if raw.appid == 0 || raw.appid == REDIST_APP_ID {
+            continue;
+        }
+        let name = raw.name.trim().to_string();
+        if name.is_empty() {
+            skipped_blank += 1;
+            continue;
+        }
+        if seen.insert(raw.appid) {
+            entries.push(OwnedEntry {
+                app_id: raw.appid,
+                name,
+            });
+        }
+    }
+    if entries.is_empty() {
+        bail!(
+            "Steam account shows no visible owned games; the profile may be private or the account may own nothing. Nothing was imported"
+        );
+    }
+    Ok((entries, skipped_blank))
+}
+
+/// Merge owned games over the local scan by app ID: installed flags come
+/// from the local scan, online names win when present.
+fn merge_owned(
+    root: &Path,
+    local: HashMap<u32, SteamGame>,
+    owned: Vec<OwnedEntry>,
+) -> Vec<SteamGame> {
+    let mut by_id = local;
+    for entry in owned {
+        match by_id.get_mut(&entry.app_id) {
+            Some(game) => game.name = entry.name,
+            None => {
+                let cover = cover_for(root, entry.app_id);
+                by_id.insert(
+                    entry.app_id,
+                    SteamGame {
+                        app_id: entry.app_id,
+                        name: entry.name,
+                        installed: false,
+                        cover,
+                    },
+                );
+            }
+        }
+    }
+    sorted(by_id.into_values().collect())
 }
 
 // --- Minimal quoted Valve KeyValues parser ---
@@ -432,14 +748,18 @@ mod tests {
         steamapps
     }
 
+    fn offline_options(dir: &Path) -> ImportOptions {
+        ImportOptions {
+            root: Some(dir.to_path_buf()),
+            account_id: None,
+            api_key: None,
+        }
+    }
+
     #[test]
-    fn rejects_extreme_nesting_and_missing_library_section() {
+    fn rejects_extreme_nesting() {
         let nested = format!("{}{}", "\"key\" {".repeat(100), "}".repeat(100));
         assert!(parse_kv(&nested).is_err());
-        let root = tempfile::tempdir().unwrap();
-        let primary = primary_fixture(root.path());
-        fs::write(primary.join("libraryfolders.vdf"), "\"other\" {}").unwrap();
-        assert!(scan(root.path()).is_err());
     }
 
     #[test]
@@ -461,11 +781,15 @@ mod tests {
             vec![
                 SteamGame {
                     app_id: 10,
-                    name: "Alpha".into()
+                    name: "Alpha".into(),
+                    installed: true,
+                    cover: None,
                 },
                 SteamGame {
                     app_id: 20,
-                    name: "Zulu".into()
+                    name: "Zulu".into(),
+                    installed: true,
+                    cover: None,
                 },
             ]
         );
@@ -490,6 +814,175 @@ mod tests {
             games.iter().map(|g| g.app_id).collect::<Vec<_>>(),
             vec![1, 3]
         );
+        assert!(games.iter().all(|g| g.installed));
+    }
+
+    #[test]
+    fn partial_bad_manifest_is_a_warning_not_a_failure() {
+        let root_tmp = tempfile::tempdir().unwrap();
+        let steamapps = primary_fixture(root_tmp.path());
+        write_manifest(&steamapps, 1, "Good", 4, "Good", true);
+        fs::write(
+            steamapps.join("appmanifest_2.acf"),
+            "\"AppState\" { \"oops\" ",
+        )
+        .unwrap();
+        // A stale download copy Steam is still writing must not even warn.
+        fs::write(steamapps.join("appmanifest_3.acf.tmp"), "partial").unwrap();
+
+        let result = import(offline_options(root_tmp.path())).unwrap();
+        assert_eq!(result.games.len(), 1);
+        assert_eq!(result.games[0].app_id, 1);
+        assert_eq!(result.warnings.len(), 1);
+        assert!(result.warnings[0].contains("appmanifest_2.acf"));
+
+        // The backward-compatible scan stays tolerant too.
+        let games = scan(root_tmp.path()).unwrap();
+        assert_eq!(games.len(), 1);
+    }
+
+    #[test]
+    fn redistributable_is_never_imported() {
+        let root_tmp = tempfile::tempdir().unwrap();
+        let steamapps = primary_fixture(root_tmp.path());
+        write_manifest(
+            &steamapps,
+            REDIST_APP_ID,
+            "Steamworks Common Redistributables",
+            4,
+            "Steamworks Shared",
+            true,
+        );
+
+        let result = import(offline_options(root_tmp.path())).unwrap();
+        assert!(result.games.is_empty());
+        assert!(result.warnings.is_empty());
+
+        let (entries, _) = parse_owned_json(
+            r#"{"response":{"game_count":2,"games":[
+                {"appid":228980,"name":"Steamworks Common Redistributables"},
+                {"appid":10,"name":"Alpha"}]}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            entries,
+            vec![OwnedEntry {
+                app_id: 10,
+                name: "Alpha".into()
+            }]
+        );
+    }
+
+    #[test]
+    fn name_falls_back_to_userconfig() {
+        let root_tmp = tempfile::tempdir().unwrap();
+        let steamapps = primary_fixture(root_tmp.path());
+        fs::create_dir_all(steamapps.join("common").join("Fallback")).unwrap();
+        fs::write(
+            steamapps.join("appmanifest_50.acf"),
+            "\"AppState\"\n{\n\"appid\" \"50\"\n\"StateFlags\" \"4\"\n\"installdir\" \"Fallback\"\n\"UserConfig\"\n{\n\"name\" \"Fallback Name\"\n}\n}\n",
+        )
+        .unwrap();
+        // No name anywhere: skipped with a warning, not a failure.
+        fs::create_dir_all(steamapps.join("common").join("Nameless")).unwrap();
+        fs::write(
+            steamapps.join("appmanifest_51.acf"),
+            "\"AppState\"\n{\n\"appid\" \"51\"\n\"StateFlags\" \"4\"\n\"installdir\" \"Nameless\"\n}\n",
+        )
+        .unwrap();
+
+        let result = import(offline_options(root_tmp.path())).unwrap();
+        assert_eq!(result.games.len(), 1);
+        assert_eq!(result.games[0].app_id, 50);
+        assert_eq!(result.games[0].name, "Fallback Name");
+        assert_eq!(result.warnings.len(), 1);
+        assert!(result.warnings[0].contains("appmanifest_51.acf"));
+    }
+
+    #[test]
+    fn online_parse_dedupes_and_marks_installed() {
+        let (entries, skipped_blank) = parse_owned_json(
+            r#"{"response":{"game_count":7,"games":[
+                {"appid":10,"name":"Alpha"},
+                {"appid":10,"name":"Alpha Duplicate"},
+                {"appid":20,"name":"Beta"},
+                {"appid":228980,"name":"Steamworks Common Redistributables"},
+                {"appid":0,"name":"Zero"},
+                {"appid":30,"name":""},
+                {"appid":40}]}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            entries,
+            vec![
+                OwnedEntry {
+                    app_id: 10,
+                    name: "Alpha".into()
+                },
+                OwnedEntry {
+                    app_id: 20,
+                    name: "Beta".into()
+                },
+            ]
+        );
+        // One blank name and one missing name.
+        assert_eq!(skipped_blank, 2);
+
+        let root_tmp = tempfile::tempdir().unwrap();
+        let local = HashMap::from([(
+            10,
+            SteamGame {
+                app_id: 10,
+                name: "Old Alpha".into(),
+                installed: true,
+                cover: None,
+            },
+        )]);
+        let games = merge_owned(root_tmp.path(), local, entries);
+        assert_eq!(games.len(), 2);
+        // Installed locally: keeps the flag, online name wins.
+        assert_eq!(games[0].app_id, 10);
+        assert_eq!(games[0].name, "Alpha");
+        assert!(games[0].installed);
+        // Owned only: not installed.
+        assert_eq!(games[1].app_id, 20);
+        assert!(!games[1].installed);
+    }
+
+    #[test]
+    fn empty_or_garbled_owned_responses_are_errors_not_empty_imports() {
+        assert!(parse_owned_json(r#"{"response":{}}"#).is_err());
+        assert!(parse_owned_json(r#"{"response":{"game_count":0}}"#).is_err());
+        assert!(parse_owned_json("not json at all").is_err());
+    }
+
+    #[test]
+    fn discovery_helpers_find_roots_and_cached_covers() {
+        let home = Path::new("/home/player");
+        assert_eq!(
+            default_roots(home),
+            vec![
+                home.join(".steam").join("steam"),
+                home.join(".local").join("share").join("Steam"),
+            ]
+        );
+
+        let root_tmp = tempfile::tempdir().unwrap();
+        let cache = root_tmp.path().join("appcache").join("librarycache");
+        fs::create_dir_all(&cache).unwrap();
+        assert_eq!(cover_for(root_tmp.path(), 70), None);
+        fs::write(cache.join("71_library_600x900.png"), "cover").unwrap();
+        assert_eq!(
+            cover_for(root_tmp.path(), 71),
+            Some(cache.join("71_library_600x900.png"))
+        );
+        // jpg wins when both cached sizes exist.
+        fs::write(cache.join("72_library_600x900.png"), "cover").unwrap();
+        fs::write(cache.join("72_library_600x900.jpg"), "cover").unwrap();
+        assert_eq!(
+            cover_for(root_tmp.path(), 72),
+            Some(cache.join("72_library_600x900.jpg"))
+        );
     }
 
     #[test]
@@ -513,20 +1006,18 @@ mod tests {
         );
         fs::write(primary.join("libraryfolders.vdf"), vdf).unwrap();
 
-        let mut names: Vec<String> = scan(root_tmp.path())
-            .unwrap()
-            .into_iter()
-            .map(|g| g.name)
-            .collect();
+        let result = import(offline_options(root_tmp.path())).unwrap();
+        let mut names: Vec<String> = result.games.into_iter().map(|g| g.name).collect();
         names.sort();
         assert_eq!(names, vec!["Extra Game", "Primary Game"]);
+        assert!(result.warnings.is_empty());
     }
 
     #[test]
     fn legacy_libraryfolders_with_escaped_windows_paths() {
         // Escaped backslashes must unescape to real Windows paths. They do
-        // not exist on this host, so they contribute nothing but must not
-        // break the primary library scan.
+        // not exist on this host, so they warn but must not break the
+        // primary library scan.
         let root_tmp = tempfile::tempdir().unwrap();
         let primary = primary_fixture(root_tmp.path());
         write_manifest(&primary, 9, "Local", 4, "Local", true);
@@ -536,9 +1027,10 @@ mod tests {
         )
         .unwrap();
 
-        let games = scan(root_tmp.path()).unwrap();
-        assert_eq!(games.len(), 1);
-        assert_eq!(games[0].name, "Local");
+        let result = import(offline_options(root_tmp.path())).unwrap();
+        assert_eq!(result.games.len(), 1);
+        assert_eq!(result.games[0].name, "Local");
+        assert_eq!(result.warnings.len(), 2);
 
         // Tokenizer-level proof that the escaping was handled.
         let kv = parse_kv("\"LibraryFolders\"\n{\n\"1\" \"D:\\\\SteamLibrary\"\n}").unwrap();
@@ -553,22 +1045,22 @@ mod tests {
     }
 
     #[test]
-    fn malformed_manifests_and_roots_are_errors_not_empty() {
+    fn malformed_libraryfolders_is_a_warning() {
         let root_tmp = tempfile::tempdir().unwrap();
-        let steamapps = primary_fixture(root_tmp.path());
-        write_manifest(&steamapps, 1, "Good", 4, "Good", true);
-        fs::write(
-            steamapps.join("appmanifest_2.acf"),
-            "\"AppState\" { \"oops\" ",
-        )
-        .unwrap();
-        assert!(scan(root_tmp.path()).is_err());
+        let primary = primary_fixture(root_tmp.path());
+        write_manifest(&primary, 1, "Good", 4, "Good", true);
+        fs::write(primary.join("libraryfolders.vdf"), "\"libraryfolders\" { ").unwrap();
 
-        fs::remove_file(steamapps.join("appmanifest_2.acf")).unwrap();
-        fs::write(steamapps.join("appmanifest_3.acf"), "not kv at all {{{").unwrap();
-        assert!(scan(root_tmp.path()).is_err());
+        let result = import(offline_options(root_tmp.path())).unwrap();
+        assert_eq!(result.games.len(), 1);
+        assert_eq!(result.warnings.len(), 1);
+        assert!(result.warnings[0].contains("libraries file"));
+    }
 
+    #[test]
+    fn invalid_roots_still_fail() {
         assert!(scan(Path::new("/definitely/not/a/steam/root")).is_err());
+        assert!(import(offline_options(Path::new("/definitely/not/a/steam/root"))).is_err());
         let file_tmp = tempfile::NamedTempFile::new().unwrap();
         assert!(scan(file_tmp.path()).is_err());
         let no_steamapps = tempfile::tempdir().unwrap();
@@ -576,12 +1068,40 @@ mod tests {
     }
 
     #[test]
-    fn malformed_libraryfolders_is_an_error() {
+    fn account_import_validates_before_any_network() {
         let root_tmp = tempfile::tempdir().unwrap();
-        let primary = primary_fixture(root_tmp.path());
-        write_manifest(&primary, 1, "Good", 4, "Good", true);
-        fs::write(primary.join("libraryfolders.vdf"), "\"libraryfolders\" { ").unwrap();
-        assert!(scan(root_tmp.path()).is_err());
+        primary_fixture(root_tmp.path());
+        let secret = "SECRET-KEY-VALUE-12345";
+        // Half-supplied credentials fail without touching the network.
+        for options in [
+            ImportOptions {
+                root: Some(root_tmp.path().to_path_buf()),
+                account_id: Some("76561198000000000".into()),
+                api_key: None,
+            },
+            ImportOptions {
+                root: Some(root_tmp.path().to_path_buf()),
+                account_id: None,
+                api_key: Some(secret.into()),
+            },
+            ImportOptions {
+                root: Some(root_tmp.path().to_path_buf()),
+                account_id: Some("not-a-steam-id".into()),
+                api_key: Some(secret.into()),
+            },
+            ImportOptions {
+                root: Some(root_tmp.path().to_path_buf()),
+                account_id: Some("76561198000000000".into()),
+                api_key: Some("   ".into()),
+            },
+        ] {
+            let error = format!("{:?}", import(options).unwrap_err());
+            assert!(!error.contains(secret), "error must not echo the key value");
+        }
+        assert!(validate_account_id("76561198000000000").is_ok());
+        assert!(validate_account_id(" 76561198000000000 ").is_ok());
+        assert!(validate_account_id("abc").is_err());
+        assert!(validate_account_id("0").is_err());
     }
 
     #[test]
