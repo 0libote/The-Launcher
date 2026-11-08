@@ -46,6 +46,7 @@ pub struct Launcher {
     path: PathBuf,
     query: String,
     filter: Filter,
+    installed_only: bool,
     selected: Option<usize>,
     draft: Option<Draft>,
     notice: Option<(String, bool)>,
@@ -90,6 +91,7 @@ impl Launcher {
             selected,
             query: String::new(),
             filter: Filter::All,
+            installed_only: false,
             draft: None,
             notice,
             remove: false,
@@ -122,6 +124,7 @@ impl Launcher {
             .enumerate()
             .filter(|(_, g)| {
                 g.name.to_lowercase().contains(&query)
+                    && (!self.installed_only || g.installed != Some(false))
                     && match self.filter {
                         Filter::All => true,
                         Filter::Favorites => g.favorite,
@@ -524,6 +527,8 @@ impl Launcher {
                             );
                         });
                     });
+                ui.checkbox(&mut self.installed_only, "Installed only")
+                    .on_hover_text("Show only installed games");
             });
         });
         ui.add_space(20.0);
@@ -546,6 +551,7 @@ impl Launcher {
                 if ui.button("Show all games").clicked() {
                     self.query.clear();
                     self.filter = Filter::All;
+                    self.installed_only = false;
                 }
             });
             return;
@@ -1503,5 +1509,10 @@ mod tests {
         assert_eq!(app.visible(), vec![0]);
         app.filter = Filter::Pc;
         assert!(app.visible().is_empty());
+        app.filter = Filter::All;
+        app.library.games[1].installed = Some(false);
+        assert_eq!(app.visible(), vec![0, 1]);
+        app.installed_only = true;
+        assert_eq!(app.visible(), vec![0]);
     }
 }
