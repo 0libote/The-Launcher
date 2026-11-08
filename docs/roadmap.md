@@ -9,8 +9,8 @@ Native Rust library UI; manual executable entries and launch options; safe direc
 ## Next: make it pleasant to use daily
 
 - Validate on Windows hardware and add Windows CI, including an actual release build.
-- Custom local cover art with an original fallback; useful long-title layouts and an artwork cache.
-- Better keyboard focus, up/down grid navigation, automatic scroll-to-selection, and clear shortcut behavior in search/dialogs.
+- Implemented: custom local cover art, title-based fallback art, bounded texture cache, bundled typography, and the redesigned native library. Validate these on Windows hardware.
+- Implemented: up/down grid navigation and scroll-to-selection. Continue Windows keyboard/accessibility and DPI validation.
 - Controller navigation and an intentional big-screen mode with controller disconnect recovery.
 - Remember window state, shelf selection, sorting, and user-selected Steam roots.
 - Import previews and per-file warnings; refresh/uninstalled handling that never silently removes custom entries.

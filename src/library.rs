@@ -27,6 +27,8 @@ pub struct Game {
     pub favorite: bool,
     #[serde(default)]
     pub last_launched: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cover: Option<PathBuf>,
 }
 
 impl Game {
@@ -151,6 +153,7 @@ mod tests {
             target: Target::Steam { app_id: id },
             favorite: false,
             last_launched: None,
+            cover: None,
         }
     }
     #[test]

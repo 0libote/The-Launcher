@@ -1,8 +1,10 @@
 # The Launcher
 
-A Windows game launcher with a console feel: a quiet cabinet, cartridge-like game tiles, and one place to press Play. Inspired by Playnite’s unified library and [BoxShelf’s](https://github.com/sassiestrhihno/boxshelf-beta) tactile shelves. This is an independent implementation; no source or artwork is copied from either project.
+A Windows game launcher with a console feel: a midnight library, cartridge-style covers, and one place to press Play. Inspired by Playnite’s unified library and [BoxShelf’s](https://github.com/sassiestrhihno/boxshelf-beta) tactile shelves. This is an independent implementation; no source or artwork is copied from either project.
 
 **Status: early foundation, not a packaged release.** Application logic and UI are Rust. Bun provides convenient development commands; the built application does not require Bun, Node, a browser, or a webview.
+
+![The Launcher native library](docs/screenshots/library-empty.png)
 
 ## What works
 
@@ -10,9 +12,10 @@ A Windows game launcher with a console feel: a quiet cabinet, cartridge-like gam
 - Launch games, edit launch options, favorite entries, search, and filter by source.
 - Import installed Steam games from a selected Steam installation and its additional libraries. Existing Steam entries are preserved. Launch through Steam’s registered URI handler.
 - Persist a local JSON library with atomic replacement and a single-instance lock.
-- Browse with mouse or left/right keys, press Enter to play, and toggle full screen with F11. Tab navigates controls.
+- Choose local PNG/JPEG cover art for any game, with original generated art as a fallback.
+- Browse with mouse or arrow keys, press Enter to play, and toggle full screen with F11. Tab navigates controls.
 
-No demo games are added to the real library. The geometric cartridge labels are original placeholders, not downloaded box art. Controller input and a 3D shelf are future work.
+No demo games are added to the real library. The generated cartridge labels are original artwork, not downloaded box art. Select a game and use **Options → Choose cover art…** to add a local image. Controller input and a 3D shelf are future work.
 
 ## Develop on Windows
 
@@ -47,6 +50,7 @@ Back up `library.json` before manual edits. Close the app first. If JSON is dama
 
 ## Project notes
 
+- [Native visual system and cover art](docs/design.md)
 - [Architecture and decisions](docs/architecture.md)
 - [Development and validation](docs/development.md)
 - [Roadmap](docs/roadmap.md)

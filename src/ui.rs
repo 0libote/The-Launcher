@@ -1,6 +1,6 @@
 use anyhow::Context;
 use eframe::egui::{
-    self, Align, Align2, Color32, FontId, Key, Layout, RichText, Sense, Stroke, StrokeKind, Vec2,
+    self, Align, Align2, FontId, Key, Layout, RichText, Sense, Stroke, StrokeKind, Vec2,
 };
 use std::{
     path::PathBuf,
@@ -14,20 +14,10 @@ use the_launcher::{
     steam,
 };
 
-// A deliberately small palette: warm hardware, orange selection, ink-black cabinet.
-const INK: Color32 = Color32::from_rgb(18, 22, 23);
-const PANEL: Color32 = Color32::from_rgb(26, 31, 32);
-const PAPER: Color32 = Color32::from_rgb(235, 228, 211);
-const MUTED: Color32 = Color32::from_rgb(155, 164, 157);
-const ORANGE: Color32 = Color32::from_rgb(242, 139, 79);
-const LINE: Color32 = Color32::from_rgb(57, 65, 63);
-const COLORS: [Color32; 5] = [
-    Color32::from_rgb(71, 100, 91),
-    Color32::from_rgb(130, 76, 53),
-    Color32::from_rgb(64, 86, 109),
-    Color32::from_rgb(123, 109, 63),
-    Color32::from_rgb(96, 79, 95),
-];
+mod art;
+mod covers;
+mod theme;
+use theme::*;
 
 #[derive(Default, PartialEq, Clone, Copy)]
 enum Filter {
@@ -59,29 +49,16 @@ pub struct Launcher {
     scan: Option<mpsc::Receiver<ScanResult>>,
     children: Vec<Child>,
     fullscreen: bool,
+    covers: covers::Covers,
+    scroll_selection: bool,
+    shelf_focused: bool,
 }
 impl Launcher {
     pub fn new(cc: &eframe::CreationContext<'_>, library: Library, path: PathBuf) -> Self {
-        let mut style = (*cc.egui_ctx.style()).clone();
-        style.visuals = egui::Visuals::dark();
-        style.visuals.panel_fill = INK;
-        style.visuals.window_fill = PANEL;
-        style.visuals.override_text_color = Some(PAPER);
-        style.visuals.selection.bg_fill = ORANGE;
-        style.visuals.selection.stroke = Stroke::new(1.0_f32, INK);
-        style.visuals.widgets.inactive.bg_fill = PANEL;
-        style.visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, LINE);
-        style.visuals.widgets.hovered.bg_stroke = Stroke::new(1.5_f32, ORANGE);
-        style.visuals.widgets.active.bg_stroke = Stroke::new(2.0_f32, ORANGE);
-        style.spacing.item_spacing = Vec2::new(12.0, 12.0);
-        style.spacing.button_padding = Vec2::new(16.0, 10.0);
-        style
-            .text_styles
-            .insert(egui::TextStyle::Body, FontId::proportional(16.0));
-        style
-            .text_styles
-            .insert(egui::TextStyle::Button, FontId::proportional(16.0));
-        cc.egui_ctx.set_style(style);
+        Self::from_library(&cc.egui_ctx, library, path)
+    }
+    fn from_library(ctx: &egui::Context, library: Library, path: PathBuf) -> Self {
+        theme::install(ctx);
         let selected = (!library.games.is_empty()).then_some(0);
         Self {
             library,
@@ -95,6 +72,9 @@ impl Launcher {
             scan: None,
             children: vec![],
             fullscreen: false,
+            covers: covers::Covers::default(),
+            scroll_selection: false,
+            shelf_focused: false,
         }
     }
     fn result(&mut self, result: anyhow::Result<()>, success: &str) {
@@ -183,6 +163,7 @@ impl Launcher {
                                     },
                                     favorite: false,
                                     last_launched: None,
+                                    cover: None,
                                 })?;
                                 added += 1;
                             }
@@ -205,243 +186,366 @@ impl Launcher {
         self.children
             .retain_mut(|child| matches!(child.try_wait(), Ok(None)));
     }
+    fn add_dialog(&mut self) {
+        self.notice = None;
+        self.draft = Some(Draft::default());
+    }
     fn header(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("header")
-            .frame(egui::Frame::new().fill(PANEL).inner_margin(24.0))
+            .exact_height(96.0)
+            .frame(
+                egui::Frame::new()
+                    .fill(BG)
+                    .inner_margin(egui::Margin::symmetric(32, 22)),
+            )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("▣").size(29.0).color(ORANGE));
-                    ui.label(RichText::new("The Launcher").size(25.0).strong());
+                    ui.vertical(|ui| {
+                        ui.label(heading("Library", 28.0));
+                        ui.label(
+                            RichText::new("All your games. A place of their own.")
+                                .size(12.0)
+                                .color(MUTED),
+                        );
+                    });
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if ui
-                            .add(
-                                egui::Button::new(RichText::new("+ Add game").color(INK))
-                                    .fill(ORANGE),
-                            )
-                            .clicked()
-                        {
-                            self.draft = Some(Draft::default());
+                        if button(ui, "Add game", Icon::Plus, true).clicked() {
+                            self.add_dialog();
                         }
-                        if ui
-                            .add_enabled(
-                                self.scan.is_none(),
-                                egui::Button::new(if self.scan.is_some() {
-                                    "Scanning Steam…"
+                        ui.add_enabled_ui(self.scan.is_none(), |ui| {
+                            if button(
+                                ui,
+                                if self.scan.is_some() {
+                                    "Scanning…"
                                 } else {
                                     "Import Steam"
-                                }),
+                                },
+                                Icon::Steam,
+                                false,
                             )
                             .clicked()
-                        {
-                            self.import(ctx);
-                        }
+                            {
+                                self.import(ctx);
+                            }
+                        });
                     });
                 });
             });
+    }
+    fn footer(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("footer")
-            .frame(egui::Frame::new().fill(PANEL).inner_margin(12.0))
+            .exact_height(42.0)
+            .frame(
+                egui::Frame::new()
+                    .fill(BG)
+                    .inner_margin(egui::Margin::symmetric(32, 5)),
+            )
             .show(ctx, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(
-                        RichText::new("Left/Right Browse     Enter Play     F11 Full screen")
-                            .size(13.0)
-                            .color(MUTED),
-                    );
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().interact_size.y = 24.0;
+                    ui.spacing_mut().button_padding = Vec2::new(10.0, 5.0);
+                    key_hint(ui, "Arrows", "Browse");
+                    key_hint(ui, "Enter", "Play");
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.label(
-                            RichText::new("Local library / v0.1")
-                                .size(13.0)
-                                .color(MUTED),
-                        );
+                        if ui
+                            .add(egui::Button::new("Full screen").min_size(Vec2::new(0.0, 28.0)))
+                            .on_hover_text("Toggle full screen (F11)")
+                            .clicked()
+                        {
+                            self.fullscreen = !self.fullscreen;
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(
+                                self.fullscreen,
+                            ));
+                        }
                     });
                 });
             });
     }
     fn sidebar(&mut self, ctx: &egui::Context) {
         egui::SidePanel::left("navigation")
-            .exact_width(190.0)
+            .exact_width(208.0)
             .resizable(false)
-            .frame(egui::Frame::new().fill(PANEL).inner_margin(20.0))
+            .frame(
+                egui::Frame::new()
+                    .fill(RAIL)
+                    .inner_margin(egui::Margin::symmetric(16, 24)),
+            )
             .show(ctx, |ui| {
-                ui.add_space(14.0);
-                ui.label(RichText::new("Your collection").color(MUTED).size(14.0));
-                ui.add_space(16.0);
-                for (filter, label) in [
-                    (Filter::All, "All games"),
-                    (Filter::Favorites, "Favorites"),
-                    (Filter::Pc, "PC executables"),
-                    (Filter::Steam, "Steam"),
+                ui.horizontal(|ui| {
+                    logo(ui);
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        ui.label(heading("The Launcher", 18.0));
+                        ui.label(RichText::new("Make time to play.").size(11.0).color(FAINT));
+                    });
+                });
+                ui.add_space(40.0);
+                ui.label(RichText::new("Collection").size(11.0).color(FAINT));
+                ui.add_space(8.0);
+                for (filter, label, kind) in [
+                    (Filter::All, "All games", Icon::Library),
+                    (Filter::Favorites, "Favorites", Icon::Heart),
+                    (Filter::Pc, "PC games", Icon::Pc),
+                    (Filter::Steam, "Steam", Icon::Steam),
                 ] {
-                    if ui
-                        .add_sized(
-                            [150.0, 42.0],
-                            egui::Button::selectable(
-                                self.filter == filter,
-                                RichText::new(label).color(if self.filter == filter {
-                                    INK
-                                } else {
-                                    PAPER
-                                }),
-                            ),
+                    let count = self
+                        .library
+                        .games
+                        .iter()
+                        .filter(|g| match filter {
+                            Filter::All => true,
+                            Filter::Favorites => g.favorite,
+                            Filter::Pc => matches!(g.target, Target::Executable { .. }),
+                            Filter::Steam => matches!(g.target, Target::Steam { .. }),
+                        })
+                        .count();
+                    let active = self.filter == filter;
+                    let (rect, response) = ui
+                        .allocate_exact_size(Vec2::new(ui.available_width(), 46.0), Sense::click());
+                    response.widget_info(|| {
+                        egui::WidgetInfo::labeled(
+                            egui::WidgetType::SelectableLabel,
+                            true,
+                            format!("{label}, {count} games"),
                         )
-                        .clicked()
-                    {
+                    });
+                    let p = ui.painter();
+                    if active || response.hovered() || response.has_focus() {
+                        p.rect_filled(
+                            rect,
+                            8.0,
+                            if active {
+                                MINT.gamma_multiply(0.12)
+                            } else {
+                                SURFACE
+                            },
+                        );
+                    }
+                    if active {
+                        p.rect_filled(
+                            egui::Rect::from_min_size(
+                                rect.left_center() - Vec2::new(0.0, 9.0),
+                                Vec2::new(3.0, 18.0),
+                            ),
+                            2.0,
+                            MINT,
+                        );
+                    }
+                    if response.has_focus() {
+                        p.rect_stroke(rect, 8.0, Stroke::new(1.0_f32, MINT), StrokeKind::Inside);
+                    }
+                    let color = if active { MINT } else { MUTED };
+                    icon(
+                        p,
+                        rect.left_center() + Vec2::new(22.0, 0.0),
+                        kind,
+                        18.0,
+                        color,
+                    );
+                    p.text(
+                        rect.left_center() + Vec2::new(42.0, 0.0),
+                        Align2::LEFT_CENTER,
+                        label,
+                        FontId::proportional(13.0),
+                        color,
+                    );
+                    p.text(
+                        rect.right_center() - Vec2::new(14.0, 0.0),
+                        Align2::RIGHT_CENTER,
+                        count.to_string(),
+                        FontId::proportional(11.0),
+                        if active { MINT } else { FAINT },
+                    );
+                    if response.clicked() {
                         self.filter = filter;
+                        self.scroll_selection = true;
                     }
                 }
                 ui.with_layout(Layout::bottom_up(Align::LEFT), |ui| {
-                    if ui.small_button("Library folder").clicked() {
+                    ui.label(
+                        RichText::new("The Launcher  /  0.1")
+                            .size(10.0)
+                            .color(FAINT),
+                    );
+                    ui.add_space(12.0);
+                    if button(ui, "Library folder", Icon::Folder, false).clicked() {
                         let result = open::that_detached(self.path.parent().unwrap())
                             .map_err(anyhow::Error::from);
                         self.result(result, "Opened library folder");
                     }
+                    ui.add_space(16.0);
                     ui.label(
-                        RichText::new("Your games.\nYour little escape.")
-                            .color(MUTED)
-                            .size(15.0),
+                        RichText::new("No accounts. Just your games.")
+                            .size(11.0)
+                            .color(MUTED),
                     );
                 });
             });
     }
     fn shelf(&mut self, ui: &mut egui::Ui, visible: &[usize]) {
+        let width = ui.available_width();
+        self.shelf_focused = false;
         ui.horizontal(|ui| {
-            ui.heading(RichText::new("Pick up where you play.").size(30.0));
-        });
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new(format!(
-                    "{} {} on this shelf",
-                    visible.len(),
-                    if visible.len() == 1 { "game" } else { "games" }
-                ))
-                .color(MUTED),
-            );
+            let label = match self.filter {
+                Filter::All => "All games",
+                Filter::Favorites => "Favorites",
+                Filter::Pc => "PC games",
+                Filter::Steam => "Steam",
+            };
+            ui.label(heading(label, 20.0));
+            badge(ui, &visible.len().to_string(), MUTED);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.query)
-                        .hint_text("Search your games")
-                        .desired_width(220.0),
-                );
+                egui::Frame::new()
+                    .fill(RAIL)
+                    .stroke(Stroke::new(1.0_f32, LINE))
+                    .corner_radius(8)
+                    .inner_margin(egui::Margin::symmetric(12, 9))
+                    .show(ui, |ui| {
+                        ui.set_width((width * 0.28).clamp(130.0, 230.0) + 33.0);
+                        ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                            ui.spacing_mut().interact_size.y = 20.0;
+                            icon(
+                                ui.painter(),
+                                ui.next_widget_position() + Vec2::new(8.0, 9.0),
+                                Icon::Search,
+                                16.0,
+                                FAINT,
+                            );
+                            ui.add_space(21.0);
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.query)
+                                    .hint_text("Search games…")
+                                    .desired_width((width * 0.28).clamp(130.0, 230.0))
+                                    .frame(false),
+                            );
+                        });
+                    });
             });
         });
-        ui.add_space(24.0);
-        if visible.is_empty() {
-            ui.add_space(40.0);
-            ui.label(
-                RichText::new(if self.library.games.is_empty() {
-                    "A new home for your games."
-                } else {
-                    "Nothing on this shelf yet."
-                })
-                .size(28.0)
-                .strong(),
-            );
-            ui.add_space(8.0);
-            ui.label(
-                RichText::new(if self.library.games.is_empty() {
-                    "Add a PC game or import your installed Steam library to get started."
-                } else {
-                    "Try another search or collection."
-                })
-                .color(MUTED),
-            );
-            ui.add_space(20.0);
-            if self.library.games.is_empty() && ui.button("Add your first game").clicked() {
-                self.draft = Some(Draft::default());
-            }
+        ui.add_space(20.0);
+        if self.library.games.is_empty() {
+            let height = (ui.available_height() - 14.0).clamp(310.0, 520.0);
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| self.welcome(ui, height));
             return;
         }
-        let columns = ((ui.available_width() + 18.0) / 180.0).floor().max(1.0) as usize;
-        let width =
-            ((ui.available_width() - (columns - 1) as f32 * 18.0) / columns as f32).min(230.0);
+        if visible.is_empty() {
+            ui.add_space(70.0);
+            ui.vertical_centered(|ui| {
+                let (rect, _) = ui.allocate_exact_size(Vec2::new(240.0, 90.0), Sense::hover());
+                empty_mark(ui.painter(), rect);
+                ui.label(
+                    RichText::new("Try a different search or another collection.").color(MUTED),
+                );
+                if ui.button("Show all games").clicked() {
+                    self.query.clear();
+                    self.filter = Filter::All;
+                }
+            });
+            return;
+        }
+        let columns = grid_columns(width);
+        let tile_width = (width - (columns - 1) as f32 * 20.0) / columns as f32;
+        let art_height = tile_width * 1.30;
         egui::ScrollArea::vertical()
             .id_salt("shelf")
+            .auto_shrink([false, false])
             .show(ui, |ui| {
                 egui::Grid::new("games")
-                    .spacing([18.0, 22.0])
+                    .spacing([20.0, 24.0])
                     .show(ui, |ui| {
                         for (position, &i) in visible.iter().enumerate() {
                             let game = &self.library.games[i];
-                            let (rect, response) =
-                                ui.allocate_exact_size(Vec2::new(width, 222.0), Sense::click());
+                            let (rect, response) = ui.allocate_exact_size(
+                                Vec2::new(tile_width, art_height + 62.0),
+                                Sense::click(),
+                            );
                             let selected = self.selected == Some(i);
-                            let p = ui.painter_at(rect);
-                            let color = COLORS[i % COLORS.len()];
-                            p.rect_filled(rect.shrink(3.0), 4.0, color);
-                            p.rect_filled(
-                                egui::Rect::from_min_max(
-                                    rect.min + Vec2::new(3.0, 3.0),
-                                    rect.min + Vec2::new(13.0, 219.0),
-                                ),
-                                0.0,
-                                INK.gamma_multiply(0.6),
-                            );
-                            let artwork = rect.shrink2(Vec2::new(24.0, 40.0));
-                            // Original geometric cartridge label; no borrowed game artwork.
-                            let center = artwork.center() - Vec2::new(0.0, 22.0);
-                            for n in 0..4 {
-                                let radius = 20.0 + n as f32 * 13.0;
-                                p.circle_stroke(
-                                    center,
-                                    radius,
-                                    Stroke::new(1.0_f32, PAPER.gamma_multiply(0.23)),
+                            self.shelf_focused |= response.has_focus();
+                            if selected && self.scroll_selection {
+                                response.scroll_to_me_animation(
+                                    Some(Align::Center),
+                                    egui::style::ScrollAnimation::none(),
                                 );
                             }
-                            p.text(
-                                rect.min + Vec2::new(24.0, 22.0),
-                                Align2::LEFT_TOP,
-                                game.source(),
-                                FontId::monospace(13.0),
-                                PAPER,
-                            );
-                            p.text(
-                                center,
-                                Align2::CENTER_CENTER,
-                                format!("{:02}", i + 1),
-                                FontId::monospace(36.0),
-                                PAPER,
-                            );
-                            let label = egui::Rect::from_min_max(
-                                rect.min + Vec2::new(14.0, 153.0),
-                                rect.max - Vec2::new(3.0, 3.0),
-                            );
-                            p.rect_filled(label, 0.0, PAPER);
-                            let galley = p.layout(
-                                game.name.clone(),
-                                FontId::proportional(16.0),
-                                INK,
-                                width - 38.0,
-                            );
-                            p.with_clip_rect(label.shrink(8.0)).galley(
-                                label.min + Vec2::new(10.0, 9.0),
-                                galley,
-                                INK,
-                            );
-                            if selected || response.hovered() || response.has_focus() {
-                                p.rect_stroke(
-                                    rect,
-                                    5.0,
-                                    Stroke::new(if selected { 3.0_f32 } else { 1.0_f32 }, ORANGE),
-                                    StrokeKind::Inside,
-                                );
-                            }
-                            if game.favorite {
-                                p.text(
-                                    rect.right_top() + Vec2::new(-18.0, 20.0),
-                                    Align2::RIGHT_TOP,
-                                    "★",
-                                    FontId::proportional(18.0),
-                                    PAPER,
-                                );
-                            }
-                            response.clone().on_hover_text(&game.name).widget_info(|| {
+                            response.widget_info(|| {
                                 egui::WidgetInfo::labeled(
                                     egui::WidgetType::Button,
                                     true,
-                                    &game.name,
+                                    format!("{}, {}", game.name, game.source()),
                                 )
                             });
+                            if ui.is_rect_visible(rect) {
+                                let p = ui.painter_at(rect.expand(5.0));
+                                let cover = egui::Rect::from_min_size(
+                                    rect.min,
+                                    Vec2::new(tile_width, art_height),
+                                );
+                                let texture = game
+                                    .cover
+                                    .as_ref()
+                                    .and_then(|path| self.covers.texture(ui.ctx(), path));
+                                if let Some(texture) = texture {
+                                    egui::Image::new(&texture)
+                                        .uv(covers::crop_uv(texture.size_vec2(), cover.size()))
+                                        .corner_radius(8)
+                                        .paint_at(ui, cover);
+                                } else {
+                                    art::cover(&p, cover, &game.name);
+                                }
+                                if selected || response.hovered() || response.has_focus() {
+                                    p.rect_stroke(
+                                        cover.expand(3.0),
+                                        11.0,
+                                        Stroke::new(
+                                            if selected { 2.0_f32 } else { 1.0_f32 },
+                                            if selected { MINT } else { TEXT },
+                                        ),
+                                        StrokeKind::Outside,
+                                    );
+                                }
+                                let title = egui::Rect::from_min_size(
+                                    cover.left_bottom() + Vec2::new(0.0, 14.0),
+                                    Vec2::new(tile_width, 20.0),
+                                );
+                                fitted_text(
+                                    &p,
+                                    title,
+                                    &game.name,
+                                    FontId::proportional(14.0),
+                                    TEXT,
+                                );
+                                icon(
+                                    &p,
+                                    title.left_bottom() + Vec2::new(7.0, 16.0),
+                                    source_icon(game.source()),
+                                    12.0,
+                                    FAINT,
+                                );
+                                p.text(
+                                    title.left_bottom() + Vec2::new(21.0, 16.0),
+                                    Align2::LEFT_CENTER,
+                                    game.source(),
+                                    FontId::proportional(11.0),
+                                    MUTED,
+                                );
+                                if game.favorite {
+                                    icon(
+                                        &p,
+                                        cover.right_top() + Vec2::new(-20.0, 20.0),
+                                        Icon::Heart,
+                                        16.0,
+                                        TEXT,
+                                    );
+                                }
+                            }
+                            let mut response = response.on_hover_text(&game.name);
+                            if let Some(error) =
+                                game.cover.as_ref().and_then(|path| self.covers.error(path))
+                            {
+                                response = response.on_hover_text(error);
+                            }
                             if response.clicked() || response.gained_focus() {
                                 self.selected = Some(i);
                             }
@@ -455,49 +559,202 @@ impl Launcher {
                         }
                     });
             });
+        self.scroll_selection = false;
     }
-    fn details(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::bottom("details")
-            .frame(egui::Frame::new().fill(PANEL).inner_margin(22.0))
-            .show(ctx, |ui| {
-                let Some(i) = self.selected else { return };
-                let game = self.library.games[i].clone();
-                ui.horizontal(|ui| {
-                    ui.vertical(|ui| {
-                        ui.label(RichText::new(&game.name).size(23.0).strong());
-                        ui.label(
-                            RichText::new(format!(
-                                "{} / {}",
-                                game.source(),
-                                if game.last_launched.is_some() {
-                                    "Previously launched"
-                                } else {
-                                    "Ready when you are"
-                                }
-                            ))
-                            .color(MUTED)
-                            .size(14.0),
-                        );
-                    });
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+    fn welcome(&mut self, ui: &mut egui::Ui, height: f32) {
+        let width = ui.available_width();
+        let compact = width < 750.0;
+        egui::Frame::new()
+            .fill(SURFACE)
+            .stroke(Stroke::new(1.0_f32, LINE))
+            .corner_radius(18)
+            .show(ui, |ui| {
+                let (rect, _) =
+                    ui.allocate_exact_size(Vec2::new(width - 2.0, height), Sense::hover());
+                let padding = if compact { 26.0 } else { 40.0 };
+                let content = rect.shrink(padding);
+                let copy_width = if compact {
+                    content.width() * 0.57
+                } else {
+                    content.width() * 0.53
+                };
+                let copy = egui::Rect::from_min_size(
+                    content.min + Vec2::new(0.0, if compact { 4.0 } else { 32.0 }),
+                    Vec2::new(copy_width, content.height()),
+                );
+                ui.scope_builder(egui::UiBuilder::new().max_rect(copy), |ui| {
+                    ui.spacing_mut().item_spacing.y = if compact { 6.0 } else { 12.0 };
+                    if !compact {
+                        badge(ui, "Your collection starts here", MINT);
+                        ui.add_space(24.0);
+                    }
+                    ui.label(heading(
+                        "Good games.
+Great company.",
+                        if compact { 30.0 } else { 44.0 },
+                    ));
+                    ui.add_space(12.0);
+                    ui.label(
+                        RichText::new(
+                            "Give your PC and Steam games a home.
+Pick something you love. Press play.",
+                        )
+                        .size(if compact { 12.0 } else { 14.0 })
+                        .color(MUTED),
+                    );
+                    ui.add_space(if compact { 12.0 } else { 24.0 });
+                    if button(ui, "Add your first game", Icon::Plus, true).clicked() {
+                        self.add_dialog();
+                    }
+                    ui.add_space(3.0);
+                    ui.spacing_mut().interact_size.y = 22.0;
+                    ui.spacing_mut().button_padding = Vec2::new(0.0, 4.0);
+                    ui.add_enabled_ui(self.scan.is_none(), |ui| {
                         if ui
-                            .add_sized(
-                                [110.0, 46.0],
-                                egui::Button::new(RichText::new("Play").color(INK).strong())
-                                    .fill(ORANGE),
+                            .add(
+                                egui::Button::new(
+                                    RichText::new("Or import from Steam")
+                                        .size(12.0)
+                                        .color(MUTED),
+                                )
+                                .frame(false),
                             )
                             .clicked()
                         {
+                            self.import(ui.ctx());
+                        }
+                    });
+                });
+                let illustration = egui::Rect::from_min_max(
+                    egui::pos2(content.left() + copy_width, content.top() + 5.0),
+                    egui::pos2(
+                        content.right() + 10.0,
+                        content.bottom() - if height > 430.0 { 78.0 } else { 0.0 },
+                    ),
+                );
+                art::welcome(ui.painter(), illustration);
+                if height > 430.0 {
+                    let y = rect.bottom() - 91.0;
+                    ui.painter().line_segment(
+                        [
+                            egui::pos2(content.left(), y),
+                            egui::pos2(content.right(), y),
+                        ],
+                        Stroke::new(1.0_f32, LINE),
+                    );
+                    for (n, (kind, title, subtitle)) in [
+                        (Icon::Pc, "Your PC games", "Add any executable"),
+                        (Icon::Steam, "Your Steam library", "Import installed games"),
+                        (Icon::Image, "Your own style", "Choose local cover art"),
+                    ]
+                    .iter()
+                    .enumerate()
+                    {
+                        let x = content.left() + n as f32 * (content.width() / 3.0);
+                        icon(
+                            ui.painter(),
+                            egui::pos2(x + 9.0, y + 31.0),
+                            *kind,
+                            18.0,
+                            MINT,
+                        );
+                        ui.painter().text(
+                            egui::pos2(x + 30.0, y + 24.0),
+                            Align2::LEFT_TOP,
+                            title,
+                            FontId::proportional(12.0),
+                            TEXT,
+                        );
+                        ui.painter().text(
+                            egui::pos2(x + 30.0, y + 44.0),
+                            Align2::LEFT_TOP,
+                            subtitle,
+                            FontId::proportional(10.0),
+                            MUTED,
+                        );
+                    }
+                }
+            });
+    }
+    fn choose_cover(&mut self, index: usize) {
+        let Some(path) = rfd::FileDialog::new()
+            .set_title("Choose cover art")
+            .add_filter("Cover image", &["png", "jpg", "jpeg"])
+            .pick_file()
+        else {
+            return;
+        };
+        let result = (|| {
+            covers::decode(&path)?;
+            let path = std::fs::canonicalize(path)?;
+            self.covers.forget(&path);
+            self.library.change(&self.path, |library| {
+                library.games[index].cover = Some(path);
+                Ok(())
+            })
+        })();
+        self.result(result, "Cover art updated");
+    }
+    fn details(&mut self, ctx: &egui::Context) {
+        if self.selected.is_none() {
+            return;
+        }
+        egui::TopBottomPanel::bottom("details")
+            .exact_height(104.0)
+            .frame(
+                egui::Frame::new()
+                    .fill(SURFACE)
+                    .inner_margin(egui::Margin::symmetric(28, 20)),
+            )
+            .show(ctx, |ui| {
+                let i = self.selected.unwrap();
+                let game = self.library.games[i].clone();
+                ui.horizontal(|ui| {
+                    let info_width = (ui.available_width() - 350.0).max(140.0);
+                    ui.allocate_ui_with_layout(
+                        Vec2::new(info_width, 62.0),
+                        Layout::top_down(Align::LEFT),
+                        |ui| {
+                            let (rect, _) =
+                                ui.allocate_exact_size(Vec2::new(info_width, 29.0), Sense::hover());
+                            fitted_text(ui.painter(), rect, &game.name, display(23.0), TEXT);
+                            ui.horizontal(|ui| {
+                                badge(ui, game.source(), art::color(&game.name));
+                                ui.label(
+                                    RichText::new(if game.last_launched.is_some() {
+                                        "Previously played"
+                                    } else {
+                                        "Ready to play"
+                                    })
+                                    .size(11.0)
+                                    .color(MUTED),
+                                );
+                            });
+                        },
+                    );
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if button(ui, "Play game", Icon::Play, true).clicked() {
                             self.play();
                         }
-                        if ui
-                            .button(if game.favorite {
-                                "Unfavorite"
+                        let favorite_button = icon_button(
+                            ui,
+                            Icon::Heart,
+                            if game.favorite {
+                                "Remove from favorites"
                             } else {
-                                "Favorite"
-                            })
-                            .clicked()
-                        {
+                                "Add to favorites"
+                            },
+                        );
+                        if game.favorite {
+                            icon(
+                                ui.painter(),
+                                favorite_button.rect.center(),
+                                Icon::Heart,
+                                18.0,
+                                MINT,
+                            );
+                        }
+                        if favorite_button.clicked() {
                             let result = self.library.change(&self.path, |l| {
                                 l.games[i].favorite = !l.games[i].favorite;
                                 Ok(())
@@ -505,6 +762,19 @@ impl Launcher {
                             self.result(result, "Collection updated");
                         }
                         ui.menu_button("Options", |ui| {
+                            if ui.button("Choose cover art…").clicked() {
+                                ui.close();
+                                self.choose_cover(i);
+                            }
+                            if game.cover.is_some() && ui.button("Remove cover art").clicked() {
+                                let result = self.library.change(&self.path, |l| {
+                                    l.games[i].cover = None;
+                                    Ok(())
+                                });
+                                self.result(result, "Original cover restored");
+                                ui.close();
+                            }
+                            ui.separator();
                             if matches!(game.target, Target::Executable { .. })
                                 && ui.button("Edit launch options").clicked()
                             {
@@ -514,6 +784,7 @@ impl Launcher {
                                     working_directory,
                                 } = &game.target
                                 {
+                                    self.notice = None;
                                     self.draft = Some(Draft {
                                         name: game.name.clone(),
                                         path: path.display().to_string(),
@@ -540,53 +811,93 @@ impl Launcher {
         let mut save = false;
         let mut cancel = false;
         if let Some(draft) = &mut self.draft {
-            egui::Modal::new(egui::Id::new("add_game")).show(ctx, |ui| {
-                ui.set_width(500.0);
-                ui.heading(if draft.editing.is_some() {
-                    "Launch options"
-                } else {
-                    "Add a PC game"
-                });
-                if let Some((message, true)) = &self.notice {
-                    ui.colored_label(ORANGE, message);
-                }
-                ui.label("Name");
-                ui.text_edit_singleline(&mut draft.name);
-                ui.label("Executable");
-                ui.horizontal(|ui| {
-                    ui.add(egui::TextEdit::singleline(&mut draft.path).desired_width(360.0));
-                    if ui.button("Browse…").clicked() {
-                        let mut picker =
-                            rfd::FileDialog::new().set_title("Choose a game executable");
-                        if cfg!(windows) {
-                            picker = picker.add_filter("Windows executable", &["exe"]);
-                        }
-                        if let Some(path) = picker.pick_file() {
-                            if draft.name.trim().is_empty() {
-                                draft.name = path
-                                    .file_stem()
-                                    .unwrap_or_default()
-                                    .to_string_lossy()
-                                    .into_owned();
+            egui::Modal::new(egui::Id::new("add_game"))
+                .frame(
+                    egui::Frame::new()
+                        .fill(SURFACE)
+                        .stroke(Stroke::new(1.0_f32, LINE))
+                        .corner_radius(18)
+                        .inner_margin(24),
+                )
+                .show(ctx, |ui| {
+                    ui.set_width(500.0);
+                    ui.label(heading(
+                        if draft.editing.is_some() {
+                            "Launch options"
+                        } else {
+                            "Add a PC game"
+                        },
+                        26.0,
+                    ));
+                    ui.label(
+                        RichText::new("A name, an executable, and you’re ready to play.")
+                            .size(12.0)
+                            .color(MUTED),
+                    );
+                    ui.add_space(6.0);
+                    egui::ScrollArea::vertical()
+                        .id_salt("launch_form")
+                        .max_height((ctx.content_rect().height() - 260.0).max(200.0))
+                        .show(ui, |ui| {
+                            if let Some((message, true)) = &self.notice {
+                                ui.colored_label(CORAL, message);
                             }
-                            draft.path = path.display().to_string();
-                        }
-                    }
+                            ui.label("Name");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut draft.name)
+                                    .hint_text("What are we playing?")
+                                    .desired_width(f32::INFINITY)
+                                    .margin(Vec2::new(12.0, 10.0)),
+                            );
+                            ui.label("Executable");
+                            ui.horizontal(|ui| {
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut draft.path)
+                                        .hint_text("Choose a game executable")
+                                        .desired_width(350.0)
+                                        .margin(Vec2::new(12.0, 10.0)),
+                                );
+                                if ui.button("Browse…").clicked() {
+                                    let mut picker = rfd::FileDialog::new()
+                                        .set_title("Choose a game executable");
+                                    if cfg!(windows) {
+                                        picker = picker.add_filter("Windows executable", &["exe"]);
+                                    }
+                                    if let Some(path) = picker.pick_file() {
+                                        if draft.name.trim().is_empty() {
+                                            draft.name = path
+                                                .file_stem()
+                                                .unwrap_or_default()
+                                                .to_string_lossy()
+                                                .into_owned();
+                                        }
+                                        draft.path = path.display().to_string();
+                                    }
+                                }
+                            });
+                            ui.label("Arguments — one per line; do not add shell quotes");
+                            ui.add(
+                                egui::TextEdit::multiline(&mut draft.arguments)
+                                    .desired_rows(2)
+                                    .margin(Vec2::new(12.0, 10.0))
+                                    .desired_width(f32::INFINITY),
+                            );
+                            ui.label(
+                                "Working directory — leave blank to use the executable’s folder",
+                            );
+                            ui.add(
+                                egui::TextEdit::singleline(&mut draft.directory)
+                                    .hint_text("Use the game’s folder")
+                                    .desired_width(f32::INFINITY)
+                                    .margin(Vec2::new(12.0, 10.0)),
+                            );
+                        });
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        save = button(ui, "Save game", Icon::Plus, true).clicked();
+                        cancel = ui.button("Cancel").clicked();
+                    });
                 });
-                ui.label("Arguments — one per line; do not add shell quotes");
-                ui.add(
-                    egui::TextEdit::multiline(&mut draft.arguments)
-                        .desired_rows(3)
-                        .desired_width(f32::INFINITY),
-                );
-                ui.label("Working directory — leave blank to use the executable’s folder");
-                ui.text_edit_singleline(&mut draft.directory);
-                ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    save = ui.button("Save game").clicked();
-                    cancel = ui.button("Cancel").clicked();
-                });
-            });
         }
         if save {
             let d = self.draft.as_ref().unwrap();
@@ -608,6 +919,7 @@ impl Launcher {
                     },
                     favorite: false,
                     last_launched: None,
+                    cover: None,
                 };
                 launch::plan(&game)?;
                 let editing = d.editing;
@@ -619,6 +931,7 @@ impl Launcher {
                         l.games[i] = Game {
                             favorite: l.games[i].favorite,
                             last_launched: l.games[i].last_launched,
+                            cover: l.games[i].cover.clone(),
                             ..game
                         };
                     } else {
@@ -634,12 +947,15 @@ impl Launcher {
             }
             self.result(result, "Game saved to your library");
         }
+        if self.draft.is_some() && ctx.input(|i| i.key_pressed(Key::Escape)) {
+            cancel = true;
+        }
         if cancel {
             self.draft = None;
         }
         if self.remove {
             egui::Modal::new(egui::Id::new("remove")).show(ctx, |ui| {
-                ui.heading("Remove this game?");
+                ui.label(heading("Remove this game?", 24.0));
                 ui.label("Only the library entry is removed. Your game files stay in place.");
                 ui.horizontal(|ui| {
                     if ui.button("Remove").clicked() {
@@ -663,8 +979,8 @@ impl Launcher {
         }
     }
 }
-impl eframe::App for Launcher {
-    fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
+impl Launcher {
+    fn draw(&mut self, ctx: &egui::Context) {
         self.poll();
         let visible = self.visible();
         if !self.selected.is_some_and(|i| visible.contains(&i)) {
@@ -674,17 +990,27 @@ impl eframe::App for Launcher {
             self.fullscreen = !self.fullscreen;
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(self.fullscreen));
         }
-        if self.draft.is_none() && !self.remove && !ctx.wants_keyboard_input() {
+        if self.draft.is_none()
+            && !self.remove
+            && !egui::Popup::is_any_open(ctx)
+            && (!ctx.wants_keyboard_input() || self.shelf_focused)
+        {
+            let columns = grid_columns((ctx.content_rect().width() - 272.0).max(1.0));
             let direction = ctx.input(|i| {
                 if i.key_pressed(Key::ArrowRight) {
                     1
                 } else if i.key_pressed(Key::ArrowLeft) {
                     -1
+                } else if i.key_pressed(Key::ArrowDown) {
+                    columns as isize
+                } else if i.key_pressed(Key::ArrowUp) {
+                    -(columns as isize)
                 } else {
                     0
                 }
             });
             if direction != 0 && !visible.is_empty() {
+                self.scroll_selection = true;
                 let current = visible
                     .iter()
                     .position(|i| Some(*i) == self.selected)
@@ -698,25 +1024,33 @@ impl eframe::App for Launcher {
                 self.play();
             }
         }
-        self.header(ctx);
         self.sidebar(ctx);
+        self.header(ctx);
+        self.footer(ctx);
         self.details(ctx);
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(INK).inner_margin(28.0))
+            .frame(
+                egui::Frame::new()
+                    .fill(BG)
+                    .inner_margin(egui::Margin::symmetric(32, 16)),
+            )
             .show(ctx, |ui| {
-                if let Some((text, error)) = &self.notice {
+                if let Some((text, error)) = &self.notice
+                    && self.draft.is_none()
+                {
                     let mut dismiss = false;
                     egui::Frame::new()
-                        .fill(PANEL)
+                        .fill(SURFACE)
                         .inner_margin(12.0)
                         .show(ui, |ui| {
                             ui.horizontal_wrapped(|ui| {
                                 ui.label(RichText::new(text).color(if *error {
-                                    ORANGE
+                                    CORAL
                                 } else {
-                                    PAPER
+                                    TEXT
                                 }));
-                                dismiss = ui.small_button("Dismiss").clicked();
+                                dismiss =
+                                    icon_button(ui, Icon::Close, "Dismiss notification").clicked();
                             });
                         });
                     if dismiss {
@@ -730,5 +1064,173 @@ impl eframe::App for Launcher {
         if !self.children.is_empty() || self.scan.is_some() {
             ctx.request_repaint_after(Duration::from_millis(500));
         }
+    }
+}
+
+fn grid_columns(width: f32) -> usize {
+    (((width + 20.0) / 180.0).floor() as usize).max(1)
+}
+
+impl eframe::App for Launcher {
+    fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
+        self.draw(ctx);
+    }
+}
+
+pub fn window_icon() -> egui::IconData {
+    let mut rgba = vec![0; 64 * 64 * 4];
+    for y in 0..64_i32 {
+        for x in 0..64_i32 {
+            let dx = (x - 32).abs();
+            let dy = (y - 32).abs();
+            let round = (dx - 20).max(0).pow(2) + (dy - 20).max(0).pow(2) <= 11 * 11;
+            let border = (17..47).contains(&x)
+                && (16..48).contains(&y)
+                && !((20..44).contains(&x) && (19..45).contains(&y));
+            let letter = (25..28).contains(&x) && (25..39).contains(&y)
+                || (25..39).contains(&x) && (36..39).contains(&y);
+            let color = if !round {
+                egui::Color32::TRANSPARENT
+            } else if border || letter {
+                BG
+            } else {
+                CORAL
+            };
+            rgba[((y * 64 + x) * 4) as usize..((y * 64 + x) * 4 + 4) as usize]
+                .copy_from_slice(&color.to_array());
+        }
+    }
+    egui::IconData {
+        rgba,
+        width: 64,
+        height: 64,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn frame(app: &mut Launcher, ctx: &egui::Context, size: Vec2, events: Vec<egui::Event>) {
+        let _ = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                events,
+                ..Default::default()
+            },
+            |ctx| app.draw(ctx),
+        );
+    }
+    #[test]
+    fn empty_and_populated_layouts_fit_supported_window_sizes() {
+        let temp = tempfile::tempdir().unwrap();
+        for count in [0, 1, 30] {
+            for size in [
+                Vec2::new(840.0, 600.0),
+                Vec2::new(1200.0, 800.0),
+                Vec2::new(1600.0, 1000.0),
+            ] {
+                let ctx = egui::Context::default();
+                let library = Library {
+                    schema_version: 1,
+                    games: (0..count)
+                        .map(|i| Game {
+                            name: format!("A deliberately very long game title {i}"),
+                            target: Target::Steam { app_id: i + 1 },
+                            favorite: false,
+                            last_launched: None,
+                            cover: None,
+                        })
+                        .collect(),
+                };
+                let mut app =
+                    Launcher::from_library(&ctx, library, temp.path().join("library.json"));
+                frame(&mut app, &ctx, size, vec![]);
+                frame(&mut app, &ctx, size, vec![]);
+                assert!(
+                    ctx.used_rect().width() <= size.x + 1.0,
+                    "layout overflows horizontally at {size:?}, count {count}, used {:?}",
+                    ctx.used_rect()
+                );
+                assert!(
+                    ctx.used_rect().height() <= size.y + 1.0,
+                    "layout overflows vertically at {size:?}, count {count}, used {:?}",
+                    ctx.used_rect()
+                );
+            }
+        }
+    }
+    #[test]
+    fn arrows_move_by_row_and_modal_input_does_not_move_the_shelf() {
+        let ctx = egui::Context::default();
+        let temp = tempfile::tempdir().unwrap();
+        let library = Library {
+            schema_version: 1,
+            games: (1..=12)
+                .map(|i| Game {
+                    name: format!("Game {i}"),
+                    target: Target::Steam { app_id: i },
+                    favorite: false,
+                    last_launched: None,
+                    cover: None,
+                })
+                .collect(),
+        };
+        let mut app = Launcher::from_library(&ctx, library, temp.path().join("library.json"));
+        let size = Vec2::new(1200.0, 800.0);
+        frame(&mut app, &ctx, size, vec![]);
+        let press = |key| {
+            vec![
+                egui::Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed: false,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        frame(&mut app, &ctx, size, press(Key::ArrowDown));
+        assert_eq!(app.selected, Some(grid_columns(928.0)));
+        frame(&mut app, &ctx, size, press(Key::ArrowUp));
+        assert_eq!(app.selected, Some(0));
+        app.draft = Some(Draft::default());
+        frame(&mut app, &ctx, size, press(Key::ArrowRight));
+        assert_eq!(app.selected, Some(0));
+        frame(&mut app, &ctx, size, press(Key::Escape));
+        assert!(app.draft.is_none());
+    }
+    #[test]
+    fn filters_keep_search_and_source_constraints_together() {
+        let ctx = egui::Context::default();
+        let mut app =
+            Launcher::from_library(&ctx, Library::default(), PathBuf::from("unused.json"));
+        app.library.games = vec![
+            Game {
+                name: "Moon Garden".into(),
+                target: Target::Steam { app_id: 10 },
+                favorite: true,
+                last_launched: None,
+                cover: None,
+            },
+            Game {
+                name: "Moon Racer".into(),
+                target: Target::Steam { app_id: 20 },
+                favorite: false,
+                last_launched: None,
+                cover: None,
+            },
+        ];
+        app.query = "MOON".into();
+        app.filter = Filter::Favorites;
+        assert_eq!(app.visible(), vec![0]);
+        app.filter = Filter::Pc;
+        assert!(app.visible().is_empty());
     }
 }

@@ -39,6 +39,8 @@ This avoids network credentials and unstable remote scraping. Local Steam files 
 
 ## Visual direction
 
-A dark cabinet with warm cartridge labels, muted green/blue/brown cases, orange focus borders, and cream text. Monospace is limited to the cartridge source and collection number; actions use a proportional face. Large targets and a fixed navigation rail separate browsing from the selected game’s Play action. Empty states explain how to add real games. No sample titles or invented artwork are saved to a user’s library.
+The midnight-blue shell, Manrope/Oxanium typography, coral primary actions, mint selection, original cartridge illustration, and responsive cover grid are described in [the visual system](design.md). Presentation helpers live under `src/ui/`: `theme.rs` owns tokens/fonts/icons, `art.rs` owns original vector compositions, and `covers.rs` handles bounded local image decoding and caching. No game data or launch execution moved into those helpers.
 
-The shelf is two-dimensional. Real cover art, spatial transitions, controller focus, and television-distance text sizes need deliberate later iterations; the current UI is a desktop foundation.
+An optional, defaulted `Game.cover` path extends schema 1 compatibly. Covers are local references with a generated fallback, not network downloads. PNG/JPEG are the only enabled image formats. Retained GPU textures and decode dimensions are bounded; decoding is currently synchronous on first display.
+
+The shelf remains two-dimensional. Controller input, a 3D renderer, metadata downloads, and television-distance tuning are separate later iterations. Window chrome stays native; Windows accent preferences still apply to the title bar.

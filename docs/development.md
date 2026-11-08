@@ -39,3 +39,9 @@ Always commit as `0libote <79215282+0libote@users.noreply.github.com>`. Check bo
 The initial implementation passed formatting, Clippy with warnings denied, and 13 unit tests on Linux with Rust 1.98.1 / Bun 1.4.4. `cargo build` succeeded, as did `cargo check --target x86_64-pc-windows-gnu --all-targets`. A native window rendered under Xvfb; an isolated fixture library loaded, Play dispatched `/usr/bin/true`, and Favorite plus the launch timestamp were persisted. The empty state, populated shelf, and add dialog were visually inspected. No real user library was modified.
 
 This does not validate the MSVC release build, Windows file picker, `.exe` execution on Windows, real Steam protocol dispatch, or screen-reader behavior. Complete the Windows checklist before distributing a release.
+
+## Visual polish validation record
+
+The visual redesign passed `bun run check` (formatting, Clippy with warnings denied, 20 tests), `cargo build`, and Windows GNU target compilation for all targets. New tests cover small-text contrast, local cover decoding/resizing, center-cropping, old-library compatibility and cover persistence, combined filters, arrow-row navigation and modal isolation, and layout bounds at 840×600, 1200×800, and 1600×1000.
+
+Native Xvfb captures covered the empty and populated library, a local image alongside generated covers, and the add dialog at minimum size. A smoke test dispatched `/usr/bin/true` through Play, toggled Favorite, and checked that launch time/favorite changes preserved the cover reference in JSON. Escape closed the add dialog. Test libraries and images lived under `/tmp`, separate from user data. See `docs/design.md` for captures and fixture labeling. Windows runtime, MSVC packaging, high DPI, screen readers, real Steam launches, and native cover-file picking remain Windows smoke-test work.

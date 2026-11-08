@@ -88,6 +88,7 @@ mod tests {
             },
             favorite: false,
             last_launched: None,
+            cover: None,
         };
         assert_eq!(
             plan(&game).unwrap(),
@@ -105,6 +106,7 @@ mod tests {
             target: Target::Steam { app_id: 42 },
             favorite: false,
             last_launched: None,
+            cover: None,
         };
         assert_eq!(
             plan(&game).unwrap(),
