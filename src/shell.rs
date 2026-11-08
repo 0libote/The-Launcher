@@ -3568,14 +3568,13 @@ fn shelf(s: &Shell, t: tok::Theme) -> El {
     } else {
         match layout.view {
             View::Grid => {
-                let cols = if tile > 240.0 { 2 } else { 3 };
-                for chunk in visible.chunks(cols) {
-                    let mut line = row().key(format!("line-{}", chunk[0])).w_full().gap(16.0);
-                    for &i in chunk {
-                        line = line.child(card(s, t, look, i, tile));
-                    }
-                    grid = grid.child(line);
+                // One wrapping row: Taffy flows as many tiles per line as the
+                // shelf fits, so wide windows fill instead of leaving a void.
+                let mut flow = row().key("flow").w_full().flex_wrap().gap(16.0);
+                for &i in &visible {
+                    flow = flow.child(card(s, t, look, i, tile));
                 }
+                grid = grid.child(flow);
             }
             View::List => {
                 for &i in &visible {
@@ -4623,6 +4622,61 @@ mod tests {
         let img = image::RgbaImage::from_pixel(width, height, image::Rgba([200, 120, 140, 255]));
         image::DynamicImage::ImageRgba8(img).save(&path).unwrap();
         path
+    }
+
+    #[test]
+    fn grid_wraps_to_fill_wide_windows() {
+        let mut rt = Runtime::new(Shell::demo(), view, (1920.0, 1000.0), Env::new(true, 2.0));
+        rt.frame(0.0);
+        rt.frame(1.0 / 60.0);
+        let mut cards: Vec<[f32; 4]> = rt
+            .elements()
+            .into_iter()
+            .filter(|e| {
+                e.key.as_deref().is_some_and(|key| {
+                    key.strip_prefix("game-")
+                        .is_some_and(|rest| rest.parse::<usize>().is_ok())
+                })
+            })
+            .map(|e| e.rect)
+            .collect();
+        cards.sort_by(|a, b| a[0].partial_cmp(&b[0]).unwrap());
+        assert_eq!(cards.len(), 6, "all demo games render a card");
+        let centers: Vec<i64> = cards.iter().map(|r| (r[0] + r[2] / 2.0) as i64).collect();
+        let distinct = {
+            let mut sorted = centers.clone();
+            sorted.sort();
+            sorted.dedup();
+            sorted
+        };
+        assert!(
+            distinct.len() >= 5,
+            "tiles spread across the width: {centers:?}"
+        );
+        assert!(
+            *distinct.iter().max().unwrap() > 1200,
+            "the grid reaches the right edge: {centers:?}"
+        );
+        let top = cards.iter().map(|r| r[1] as i64).min().unwrap();
+        let bottom = cards.iter().map(|r| r[1] as i64).max().unwrap();
+        assert!(
+            bottom - top < 100,
+            "a wide window fits one row: tops {top}..{bottom}"
+        );
+    }
+
+    #[test]
+    fn grid_wraps_to_rows_on_narrow_windows() {
+        let rt = harness();
+        let y = |rt: &Runtime<Shell>, key: &str| rt.find(key).unwrap().1;
+        assert!(
+            (y(&rt, "game-3") - y(&rt, "game-0")).abs() < 40.0,
+            "five tiles share the first row at 1280 wide"
+        );
+        assert!(
+            y(&rt, "game-5") - y(&rt, "game-0") > 100.0,
+            "the sixth tile wraps to a second row"
+        );
     }
 
     #[test]
