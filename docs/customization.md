@@ -10,7 +10,7 @@ Select **Customize** in the launcher’s title bar. It remains available even wh
 - Navigation can sit on the left, right, or be hidden. Details can appear on the right, in a modal dialog, or be hidden. Tools can sit above or below it.
 - Choose **Grid**, **List**, or **Shelf**. Grid wraps portrait covers; List shows compact rows; Shelf is a horizontally scrolling row of cases. These are working views of the same library, not separate collections.
 - Adjust cover width and panel widths. Narrow windows cap side-panel widths to preserve space for the collection.
-- Edit the canvas, navigation, panel, control, text, border, action, and selection colors. Changes preview immediately across the shell, title bar, controls, and dialogs. Artwork retains its own colors.
+- Edit the canvas, navigation, surface, text, secondary text, hairline, accent, and selection colors. Changes preview immediately across the shell, title bar, controls, and dialogs. Artwork retains its own colors.
 - Duplicate a layout, name it, and keep up to 32 named layouts. Switch them in the editor. **Save layouts** commits the workspace; **Cancel changes** restores the complete workspace from before the editor opened, including colors, selection, and any duplicates/deletions.
 
 This first editor supports docking existing components into defined regions. It is not yet a freeform widget canvas, arbitrary nesting system, user-script engine, or font/asset-package editor. Those require a component contract before adding more editor controls. None is implied by a saved layout in this version.
@@ -23,7 +23,7 @@ Saving validates layout names, positions, and supported size ranges, then atomic
 
 ## Window behavior
 
-The launcher uses the native window frame. File pickers remain native system dialogs when the deferred add/edit dialogs land. Windows docking, Snap behavior, high DPI, keyboard focus, and system-menu behavior need real Windows validation.
+The launcher draws a custom titlebar with window-drag regions; the toolbar keeps clear of the platform's traffic lights / caption buttons via chrome insets. File pickers remain native system dialogs when the deferred add/edit dialogs land. Windows docking, Snap behavior, high DPI, keyboard focus, and system-menu behavior need real Windows validation.
 
 ## Developer boundaries
 

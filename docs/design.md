@@ -14,7 +14,7 @@ The launcher takes its cues from console collection screens and physical game ca
 | `MINT` | `#9fdecc` | Active collection, keyboard focus, selection |
 | `LILAC` | `#b7afe0` | Original fallback artwork |
 
-Rune renders the interface with its embedded Inter face. The launcher uses the native window frame. See [workspace customization](customization.md).
+Rune renders the interface with its embedded Inter face. The launcher draws a custom 60pt titlebar (draggable toolbar with brand, search, and Play) and keeps the platform window controls clear via chrome insets. See [workspace customization](customization.md).
 
 ## Composition
 
@@ -25,7 +25,7 @@ A 208-point navigation rail holds the brand, source/favorite filters with real c
 
 The empty collection shows an original, vector-drawn trio of cartridge cases and a direct invitation to add or import games. It creates no fictional entries. Shorter windows omit supporting tips, and the welcome panel and add dialog scroll when necessary. Filtered-empty views offer a way to clear the search and return to all games.
 
-Tiles use original title-based artwork until a local cover or downloaded artwork is selected. The title’s hash picks its gradient colors, so removing or filtering another game does not change its appearance. Long titles are truncated visually; full titles remain in accessible labels. Selected tiles use mint outlines. These are desktop layouts, not a claim of complete controller or screen-reader support.
+Tiles use original title-based artwork until a local cover or downloaded artwork is selected. The title’s hash picks its gradient colors, so removing or filtering another game does not change its appearance. Long titles are truncated visually; full titles remain in accessible labels. Selected tiles use selection outlines with a soft glow, top-lit rims, drop shadows, and press/spring motion. These are desktop layouts, not a claim of complete controller or screen-reader support.
 
 ## Local cover art
 

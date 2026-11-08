@@ -41,7 +41,7 @@ See [the Playnite reference and parity table](steam-integration.md). Local disco
 
 The rendering backend is Rune (native GPU, headless-capable). A separate `workspace.json` stores named panel arrangements, views, sizes, and skin colors; it contains no games or secrets. The workspace editor overlay edits layouts live, validates on save, and restores the snapshot on cancel. Presentation changes do not migrate or rewrite game launch targets.
 
-The launcher uses the native window frame. File pickers are native OS dialogs through Rune. Windows Snap/high-DPI behavior still requires native validation.
+The launcher draws its own titlebar (`App::titlebar`, 60pt) with a draggable toolbar, brand mark, search pill, and Play action; Rune keeps the platform's window controls over it (traffic lights on macOS, caption buttons on Windows) with `chrome_insets` padding. File pickers are native OS dialogs through Rune. Windows Snap/high-DPI behavior still requires native validation. On Linux the native frame stays and the insets report zero.
 
 ## Visual direction
 
@@ -49,7 +49,9 @@ The midnight-blue shell, coral primary actions, mint selection, gradient card ar
 
 An optional, defaulted `Game.cover` path extends schema 1 compatibly. Covers remain local references with a generated fallback. Built-in metadata providers can now populate them through the local artwork cache. PNG/JPEG are the only enabled image formats. Retained GPU textures and decode dimensions are bounded; decoding is currently synchronous on first display.
 
-The shelf remains two-dimensional. Controller input, a 3D renderer, and television-distance tuning are separate later iterations. The launcher uses the native window frame; native window operations go through the backend.
+The shelf remains two-dimensional. Controller input, a 3D renderer, and television-distance tuning are separate later iterations. The launcher draws a custom titlebar with window-drag regions; native window operations go through the backend.
+
+Every surface is skin-driven: `Look::of` resolves the workspace skin (background, navigation, surface, raised, text, muted, faint, line, accent, selection) per frame into the titlebar, rail, shelf, cards, details, and dialogs. There is no generic base-theme fallback; the workspace editor previews all eight editable skin fields live.
 
 ## Metadata pipeline
 

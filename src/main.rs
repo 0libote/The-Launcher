@@ -45,7 +45,10 @@ fn run() -> Result<()> {
     let library =
         Library::load(&path).with_context(|| format!("Unable to load {}", path.display()))?;
     let state = shell::Shell::from_disk(library, path);
-    rune::App::new(shell::spec()).init(move || state).run();
+    rune::App::new(shell::spec())
+        .titlebar(rune::Titlebar::new(60.0))
+        .init(move || state)
+        .run();
     drop(_guard);
     Ok(())
 }

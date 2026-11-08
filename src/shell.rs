@@ -21,7 +21,7 @@ use std::sync::{
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
-use rune::tok::{self, motion, radius, type_};
+use rune::tok::{motion, radius, type_};
 use rune::{
     AppSpec, Color, Cx, El, FileDialogOptions, Pixels, ScrollSpec, SurfaceFit, TextEdit, Tx, col,
     el, row, spacer, text, text_input,
@@ -50,12 +50,58 @@ const BACKGROUNDS: [([u8; 3], &str); 4] = [
     ([24, 28, 40], "Slate"),
     ([28, 22, 26], "Ember"),
 ];
+/// Navigation-rail presets: a step above the canvas.
+const NAVS: [([u8; 3], &str); 4] = [
+    ([21, 26, 40], "Rail"),
+    ([14, 17, 28], "Deep"),
+    ([30, 34, 50], "Slate"),
+    ([34, 28, 32], "Ember"),
+];
+/// Panel-surface presets for cards, details, and dialogs.
+const SURFACES: [([u8; 3], &str); 4] = [
+    ([29, 35, 51], "Panel"),
+    ([20, 24, 38], "Low"),
+    ([38, 46, 64], "Raised"),
+    ([40, 32, 36], "Warm"),
+];
+/// Text presets: warm ivory default, plus muted variants for secondary text.
+const TEXTS: [([u8; 3], &str); 3] = [
+    ([243, 240, 232], "Ivory"),
+    ([225, 230, 240], "Frost"),
+    ([255, 255, 255], "White"),
+];
+const MUTEDS: [([u8; 3], &str); 3] = [
+    ([160, 171, 190], "Slate"),
+    ([140, 150, 170], "Cool"),
+    ([180, 175, 165], "Warm"),
+];
+/// Hairline presets for borders and rules.
+const LINES: [([u8; 3], &str); 3] = [
+    ([49, 59, 80], "Slate"),
+    ([36, 44, 62], "Deep"),
+    ([64, 72, 96], "Bright"),
+];
+/// Selection presets: mint is the default.
+const SELECTIONS: [([u8; 3], &str); 4] = [
+    ([159, 222, 204], "Mint"),
+    ([255, 151, 124], "Coral"),
+    ([150, 190, 255], "Sky"),
+    ([183, 175, 224], "Lilac"),
+];
 
-/// Brand colors resolved from the active workspace skin. Computed per frame
-/// from [`Shell::workspace`] so skins apply without restyling widgets.
+/// Every color the shell paints, resolved from the active workspace skin.
+/// Computed per frame from [`Shell::workspace`] so skins apply live to the
+/// titlebar, rail, shelf, cards, details, and dialogs — not just the canvas.
 #[derive(Clone, Copy)]
 struct Look {
     bg: Color,
+    nav: Color,
+    surface: Color,
+    raised: Color,
+    text: Color,
+    muted: Color,
+    faint: Color,
+    line: Color,
     accent: Color,
     ink: Color,
     select: Color,
@@ -73,6 +119,13 @@ impl Look {
         };
         Look {
             bg: rgb8(skin.background),
+            nav: rgb8(skin.navigation),
+            surface: rgb8(skin.surface),
+            raised: rgb8(skin.raised),
+            text: rgb8(skin.text),
+            muted: rgb8(skin.muted),
+            faint: rgb8(skin.faint),
+            line: rgb8(skin.line),
             accent,
             ink: ink_for(skin.accent),
             select,
@@ -83,6 +136,31 @@ impl Look {
                 a: 1.0,
             },
         }
+    }
+
+    /// Subtle hover wash that works on any dark skin.
+    fn hover(self) -> Color {
+        self.text.alpha(0.07)
+    }
+
+    /// Pressed wash, a touch stronger than hover.
+    fn pressed(self) -> Color {
+        self.text.alpha(0.12)
+    }
+
+    /// Tinted wash for the active collection row.
+    fn active_wash(self) -> Color {
+        self.accent.alpha(0.14)
+    }
+
+    /// Selected-row wash for list rows.
+    fn select_wash(self) -> Color {
+        self.select.alpha(0.12)
+    }
+
+    /// Top-lit rim highlight for elevated panels and cards.
+    fn rim_top(self) -> Color {
+        self.text.alpha(0.14)
     }
 }
 
@@ -1793,36 +1871,39 @@ fn poll(s: &mut Shell, _now: f64, tx: &mut Tx) -> bool {
     changed
 }
 
-fn view(s: &Shell, _: &mut Cx<Shell>) -> El {
-    let t = tok::theme(true);
+fn view(s: &Shell, cx: &mut Cx<Shell>) -> El {
     let look = Look::of(&s.workspace);
+    cx.foreground(look.text);
+    cx.focus_ring(2.0, 2.0, look.select);
+    cx.caption_color(look.text);
+    let chrome = cx.chrome_insets();
     let mut root = el().key("root").w_full().h_full().child(
         col()
             .key("window")
             .w_full()
             .h_full()
             .fill(look.bg)
-            .child(toolbar(s, t))
-            .child(body(s, t))
-            .child(footer(s, t)),
+            .child(toolbar(s, look, chrome.leading, chrome.trailing))
+            .child(body(s, look))
+            .child(footer(s, look)),
     );
     if s.workspace.current().layout.details == Details::Modal && s.details_open {
-        root = root.child(game_modal(s, t));
+        root = root.child(game_modal(s, look));
     }
     if s.draft.is_some() {
-        root = root.child(game_dialog(s, t));
+        root = root.child(game_dialog(s, look));
     }
     if s.remove {
-        root = root.child(remove_dialog(s, t));
+        root = root.child(remove_dialog(s, look));
     }
     if s.steam.open {
-        root = root.child(steam_dialog(s, t));
+        root = root.child(steam_dialog(s, look));
     }
     if s.meta.open {
-        root = root.child(meta_dialog(s, t));
+        root = root.child(meta_dialog(s, look));
     }
     if s.workspace_open {
-        root = root.child(workspace_dialog(s, t));
+        root = root.child(workspace_dialog(s, look));
     }
     root
 }
@@ -1833,14 +1914,14 @@ fn scrim() -> El {
         .absolute(0.0, 0.0)
         .w_full()
         .h_full()
-        .fill(Color::BLACK.alpha(0.55))
+        .fill(Color::BLACK.alpha(0.62))
         .a11y_hidden()
 }
 
 /// Centered dialog panel. `outside` decides whether a click outside dismisses;
 /// Escape always dismisses through `dismiss`.
 fn panel(
-    t: tok::Theme,
+    look: Look,
     key: &str,
     title: &str,
     outside: bool,
@@ -1852,13 +1933,15 @@ fn panel(
         .role("dialog")
         .label(title)
         .w(560.0)
-        .radius(radius::LG)
-        .fill(t.card)
-        .border(1.0, t.separator)
+        .radius(16.0)
+        .continuous_corners()
+        .fill(look.surface)
+        .border_gradient(1.0, look.rim_top(), look.line)
+        .shadow(0.0, 32.0, Color::BLACK.alpha(0.45))
         .padding(24.0)
         .gap(12.0)
         .modal(outside, dismiss)
-        .child(text(title).font(type_::TITLE).color(t.text));
+        .child(text(title).font(type_::TITLE).color(look.text));
     el().key(format!("{key}-layer"))
         .absolute(0.0, 0.0)
         .w_full()
@@ -1871,7 +1954,6 @@ fn dialog_button(
     key: &str,
     label_text: &str,
     primary: bool,
-    t: tok::Theme,
     look: Look,
     press: impl Fn(&mut Shell) + 'static,
 ) -> El {
@@ -1883,25 +1965,38 @@ fn dialog_button(
         .h(40.0)
         .px(18.0)
         .radius(radius::MD)
+        .continuous_corners()
         .center()
-        .fill(if primary { look.accent } else { t.control_off })
+        .fill(if primary { look.accent } else { look.raised })
         .hover(if primary {
             look.accent.alpha(0.85)
         } else {
-            t.hover
+            look.hover()
         })
+        .press(look.pressed())
+        .press_scale(0.97)
+        .focus_ring(2.0, 1.0, look.select)
+        .shadow(
+            0.0,
+            if primary { 12.0 } else { 0.0 },
+            if primary {
+                look.accent.alpha(0.3)
+            } else {
+                Color::TRANSPARENT
+            },
+        )
         .on_press(press)
         .child(
             text(label_text.to_owned())
                 .font(type_::LABEL)
-                .color(if primary { look.ink } else { t.text }),
+                .color(if primary { look.ink } else { look.text }),
         )
 }
 
 /// A labeled single-line field bound to one of the draft's [`TextEdit`]s.
 fn form_field(
     s: &Shell,
-    t: tok::Theme,
+    look: Look,
     label_text: &str,
     key: &str,
     get: impl Fn(&Draft) -> &TextEdit + 'static,
@@ -1914,28 +2009,27 @@ fn form_field(
         .label(label_text)
         .single_line()
         .w_full()
-        .color(t.text)
-        .placeholder(placeholder, t.text_secondary)
+        .color(look.text)
+        .placeholder(placeholder, look.muted)
         .on_edit(move |s: &mut Shell| access(s));
     col()
         .key(format!("{key}-field"))
         .w_full()
         .gap(6.0)
-        .child(text(label_text).font(type_::LABEL).color(t.text_secondary))
+        .child(text(label_text).font(type_::LABEL).color(look.muted))
         .child(
             el().key(format!("{key}-box"))
                 .w_full()
                 .h(40.0)
                 .radius(radius::MD)
-                .border(1.0, t.separator)
+                .border(1.0, look.line)
                 .px(12.0)
                 .center_y()
                 .child(input),
         )
 }
 
-fn game_dialog(s: &Shell, t: tok::Theme) -> El {
-    let look = Look::of(&s.workspace);
+fn game_dialog(s: &Shell, look: Look) -> El {
     let editing = s.draft.as_ref().and_then(|draft| draft.editing);
     let title = if editing.is_some() {
         "Launch options"
@@ -1949,11 +2043,11 @@ fn game_dialog(s: &Shell, t: tok::Theme) -> El {
         .child(
             text("A name, an executable, and you are ready to play.")
                 .font(type_::LABEL)
-                .color(t.text_secondary),
+                .color(look.muted),
         )
         .child(form_field(
             s,
-            t,
+            look,
             "Name",
             "draft-name",
             |draft| &draft.name,
@@ -1967,7 +2061,7 @@ fn game_dialog(s: &Shell, t: tok::Theme) -> El {
                 .gap(8.0)
                 .child(el().key("draft-path-grow").grow(1.0).child(form_field(
                     s,
-                    t,
+                    look,
                     "Executable",
                     "draft-path",
                     |draft| &draft.path,
@@ -1984,8 +2078,8 @@ fn game_dialog(s: &Shell, t: tok::Theme) -> El {
                         .px(14.0)
                         .radius(radius::MD)
                         .center_y()
-                        .fill(t.control_off)
-                        .hover(t.hover)
+                        .fill(look.raised)
+                        .hover(look.hover())
                         .on_press_tx(|_: &mut Shell, tx: &mut Tx| {
                             let mut options = FileDialogOptions {
                                 title: "Choose a game executable".into(),
@@ -2008,7 +2102,7 @@ fn game_dialog(s: &Shell, t: tok::Theme) -> El {
                                 }
                             });
                         })
-                        .child(text("Browse…").font(type_::LABEL).color(t.text)),
+                        .child(text("Browse…").font(type_::LABEL).color(look.text)),
                 ),
         );
     let args = text_input(
@@ -2019,8 +2113,8 @@ fn game_dialog(s: &Shell, t: tok::Theme) -> El {
     .label("Arguments, one per line")
     .w_full()
     .h(64.0)
-    .color(t.text)
-    .placeholder("One argument per line; no shell quotes", t.text_secondary)
+    .color(look.text)
+    .placeholder("One argument per line; no shell quotes", look.muted)
     .on_edit(|s: &mut Shell| &mut s.draft.as_mut().expect("game form closed").args);
     form = form
         .child(
@@ -2031,14 +2125,14 @@ fn game_dialog(s: &Shell, t: tok::Theme) -> El {
                 .child(
                     text("Arguments — one per line; do not add shell quotes")
                         .font(type_::LABEL)
-                        .color(t.text_secondary),
+                        .color(look.muted),
                 )
                 .child(
                     el().key("draft-args-box")
                         .w_full()
                         .h(76.0)
                         .radius(radius::MD)
-                        .border(1.0, t.separator)
+                        .border(1.0, look.line)
                         .px(12.0)
                         .py(6.0)
                         .child(args),
@@ -2046,7 +2140,7 @@ fn game_dialog(s: &Shell, t: tok::Theme) -> El {
         )
         .child(form_field(
             s,
-            t,
+            look,
             "Working directory — blank uses the executable's folder",
             "draft-dir",
             |draft| &draft.dir,
@@ -2070,7 +2164,6 @@ fn game_dialog(s: &Shell, t: tok::Theme) -> El {
                 "dialog-save",
                 "Save game",
                 true,
-                t,
                 look,
                 |s: &mut Shell| {
                     s.commit_draft();
@@ -2080,7 +2173,6 @@ fn game_dialog(s: &Shell, t: tok::Theme) -> El {
                 "dialog-cancel",
                 "Cancel",
                 false,
-                t,
                 look,
                 |s: &mut Shell| {
                     s.draft = None;
@@ -2093,7 +2185,7 @@ fn game_dialog(s: &Shell, t: tok::Theme) -> El {
         .h_full()
         .child(scrim())
         .child(panel(
-            t,
+            look,
             "game-dialog",
             title,
             false,
@@ -2104,8 +2196,7 @@ fn game_dialog(s: &Shell, t: tok::Theme) -> El {
         ))
 }
 
-fn remove_dialog(s: &Shell, t: tok::Theme) -> El {
-    let look = Look::of(&s.workspace);
+fn remove_dialog(s: &Shell, look: Look) -> El {
     let Some(index) = s.current() else {
         return el().key("remove-dialog");
     };
@@ -2131,7 +2222,7 @@ fn remove_dialog(s: &Shell, t: tok::Theme) -> El {
         .key("remove-form")
         .w_full()
         .gap(12.0)
-        .child(text(body).font(type_::BODY).color(t.text_secondary))
+        .child(text(body).font(type_::BODY).color(look.muted))
         .child(
             row()
                 .key("dialog-buttons")
@@ -2141,7 +2232,6 @@ fn remove_dialog(s: &Shell, t: tok::Theme) -> El {
                     "remove-confirm",
                     confirm,
                     true,
-                    t,
                     look,
                     |s: &mut Shell| {
                         s.confirm_remove();
@@ -2151,7 +2241,6 @@ fn remove_dialog(s: &Shell, t: tok::Theme) -> El {
                     "remove-cancel",
                     "Cancel",
                     false,
-                    t,
                     look,
                     |s: &mut Shell| {
                         s.remove = false;
@@ -2164,7 +2253,7 @@ fn remove_dialog(s: &Shell, t: tok::Theme) -> El {
         .h_full()
         .child(scrim())
         .child(panel(
-            t,
+            look,
             "remove-dialog",
             title,
             true,
@@ -2175,20 +2264,19 @@ fn remove_dialog(s: &Shell, t: tok::Theme) -> El {
         ))
 }
 
-fn steam_dialog(s: &Shell, t: tok::Theme) -> El {
-    let look = Look::of(&s.workspace);
+fn steam_dialog(s: &Shell, look: Look) -> El {
     let mut form = col().key("steam-form").w_full().gap(12.0).child(
         text("Scan your Steam libraries and merge installed games. Account details are optional, used once, and never stored.")
             .font(type_::LABEL)
-            .color(t.text_secondary),
+            .color(look.muted),
     );
-    form = steam_fields(s, t, form);
+    form = steam_fields(s, look, form);
     if s.steam.scanning {
         form = form.child(
             text("Scanning Steam libraries…")
                 .key("steam-status")
                 .font(type_::BODY)
-                .color(t.text),
+                .color(look.text),
         );
     }
     if let Some(error) = &s.steam.error {
@@ -2211,14 +2299,14 @@ fn steam_dialog(s: &Shell, t: tok::Theme) -> El {
                 text(format!("• {warning}"))
                     .key(format!("steam-warning-{i}"))
                     .font(type_::LABEL)
-                    .color(t.text_secondary),
+                    .color(look.muted),
             );
         }
         if s.steam.warnings.len() > 5 {
             form = form.child(
                 text(format!("…and {} more", s.steam.warnings.len() - 5))
                     .font(type_::LABEL)
-                    .color(t.text_secondary),
+                    .color(look.muted),
             );
         }
     }
@@ -2228,7 +2316,6 @@ fn steam_dialog(s: &Shell, t: tok::Theme) -> El {
             "steam-scan",
             "Scan",
             true,
-            t,
             look,
             |s: &mut Shell| {
                 s.begin_scan();
@@ -2239,7 +2326,6 @@ fn steam_dialog(s: &Shell, t: tok::Theme) -> El {
         "steam-close",
         "Close",
         false,
-        t,
         look,
         |s: &mut Shell| {
             s.steam.open = false;
@@ -2252,7 +2338,7 @@ fn steam_dialog(s: &Shell, t: tok::Theme) -> El {
         .h_full()
         .child(scrim())
         .child(panel(
-            t,
+            look,
             "steam-dialog",
             "Import Steam",
             true,
@@ -2265,33 +2351,30 @@ fn steam_dialog(s: &Shell, t: tok::Theme) -> El {
 
 /// Steam panel fields. Separate from [`form_field`] because the panel edits
 /// [`SteamPanel`], not the game [`Draft`].
-fn steam_fields(s: &Shell, t: tok::Theme, mut form: El) -> El {
+fn steam_fields(s: &Shell, look: Look, mut form: El) -> El {
     let root = text_input(&s.steam.root, type_::BODY.lh(20.0))
         .key("steam-root")
         .label("Steam folder")
         .single_line()
         .w_full()
-        .color(t.text)
-        .placeholder("Detect automatically", t.text_secondary)
+        .color(look.text)
+        .placeholder("Detect automatically", look.muted)
         .on_edit(|s: &mut Shell| &mut s.steam.root);
     let account = text_input(&s.steam.account, type_::BODY.lh(20.0))
         .key("steam-account")
         .label("Steam account ID (SteamID64), optional")
         .single_line()
         .w_full()
-        .color(t.text)
-        .placeholder(
-            "Optional: include owned, uninstalled games",
-            t.text_secondary,
-        )
+        .color(look.text)
+        .placeholder("Optional: include owned, uninstalled games", look.muted)
         .on_edit(|s: &mut Shell| &mut s.steam.account);
     let key = text_input(&s.steam.key, type_::BODY.lh(20.0))
         .key("steam-key")
         .label("Steam Web API key, optional and never stored")
         .single_line()
         .w_full()
-        .color(t.text)
-        .placeholder("Optional, used once for this scan", t.text_secondary)
+        .color(look.text)
+        .placeholder("Optional, used once for this scan", look.muted)
         .on_edit(|s: &mut Shell| &mut s.steam.key);
     let browse = row()
         .key("steam-browse")
@@ -2302,8 +2385,8 @@ fn steam_fields(s: &Shell, t: tok::Theme, mut form: El) -> El {
         .px(14.0)
         .radius(radius::MD)
         .center_y()
-        .fill(t.control_off)
-        .hover(t.hover)
+        .fill(look.raised)
+        .hover(look.hover())
         .on_press_tx(|_: &mut Shell, tx: &mut Tx| {
             tx.open_folder(
                 FileDialogOptions {
@@ -2317,7 +2400,7 @@ fn steam_fields(s: &Shell, t: tok::Theme, mut form: El) -> El {
                 },
             );
         })
-        .child(text("Browse…").font(type_::LABEL).color(t.text));
+        .child(text("Browse…").font(type_::LABEL).color(look.text));
     form = form
         .child(
             col()
@@ -2327,7 +2410,7 @@ fn steam_fields(s: &Shell, t: tok::Theme, mut form: El) -> El {
                 .child(
                     text("Steam folder — blank uses automatic detection")
                         .font(type_::LABEL)
-                        .color(t.text_secondary),
+                        .color(look.muted),
                 )
                 .child(
                     row()
@@ -2340,7 +2423,7 @@ fn steam_fields(s: &Shell, t: tok::Theme, mut form: El) -> El {
                                     .w_full()
                                     .h(40.0)
                                     .radius(radius::MD)
-                                    .border(1.0, t.separator)
+                                    .border(1.0, look.line)
                                     .px(12.0)
                                     .center_y()
                                     .child(root),
@@ -2357,14 +2440,14 @@ fn steam_fields(s: &Shell, t: tok::Theme, mut form: El) -> El {
                 .child(
                     text("Steam account ID (SteamID64) — optional")
                         .font(type_::LABEL)
-                        .color(t.text_secondary),
+                        .color(look.muted),
                 )
                 .child(
                     el().key("steam-account-box")
                         .w_full()
                         .h(40.0)
                         .radius(radius::MD)
-                        .border(1.0, t.separator)
+                        .border(1.0, look.line)
                         .px(12.0)
                         .center_y()
                         .child(account),
@@ -2378,14 +2461,14 @@ fn steam_fields(s: &Shell, t: tok::Theme, mut form: El) -> El {
                 .child(
                     text("Steam Web API key — optional, used once, never stored")
                         .font(type_::LABEL)
-                        .color(t.text_secondary),
+                        .color(look.muted),
                 )
                 .child(
                     el().key("steam-key-box")
                         .w_full()
                         .h(40.0)
                         .radius(radius::MD)
-                        .border(1.0, t.separator)
+                        .border(1.0, look.line)
                         .px(12.0)
                         .center_y()
                         .child(key),
@@ -2396,7 +2479,6 @@ fn steam_fields(s: &Shell, t: tok::Theme, mut form: El) -> El {
 
 /// Labeled on/off switch row.
 fn toggle(
-    t: tok::Theme,
     look: Look,
     key: &str,
     label_text: &str,
@@ -2419,14 +2501,14 @@ fn toggle(
         .child(
             text(label_text.to_owned())
                 .font(type_::BODY)
-                .color(t.text)
+                .color(look.text)
                 .grow(1.0),
         )
         .child(
             el().key("switch")
                 .size(38.0, 22.0)
                 .radius(11.0)
-                .fill(if on { look.accent } else { t.control_off })
+                .fill(if on { look.accent } else { look.raised })
                 .motion(motion::SNAPPY)
                 .child(
                     el().key("knob")
@@ -2440,7 +2522,6 @@ fn toggle(
 
 /// Segmented option row. `options` are (id, label); `selected` is the active id.
 fn segmented(
-    t: tok::Theme,
     look: Look,
     key: &str,
     selected: &str,
@@ -2465,29 +2546,28 @@ fn segmented(
                 .fill(if active {
                     look.accent.alpha(0.2)
                 } else {
-                    t.control_off
+                    look.raised
                 })
-                .border(1.0, if active { look.accent } else { t.separator })
-                .hover(t.hover)
+                .border(1.0, if active { look.accent } else { look.line })
+                .hover(look.hover())
                 .on_press(move |s: &mut Shell| pick(s, id.clone()))
                 .child(text(label.clone()).font(type_::LABEL).color(if active {
                     look.accent
                 } else {
-                    t.text
+                    look.text
                 })),
         );
     }
     items
 }
 
-fn section_title(t: tok::Theme, label_text: &str) -> El {
+fn section_title(look: Look, label_text: &str) -> El {
     text(label_text.to_owned())
         .font(type_::LABEL)
-        .color(t.text_secondary)
+        .color(look.muted)
 }
 
-fn meta_dialog(s: &Shell, t: tok::Theme) -> El {
-    let look = Look::of(&s.workspace);
+fn meta_dialog(s: &Shell, look: Look) -> El {
     let game = s
         .meta
         .target
@@ -2515,12 +2595,11 @@ fn meta_dialog(s: &Shell, t: tok::Theme) -> El {
                 .w_full()
                 .gap(12.0)
                 .center_y()
-                .child(text(progress).font(type_::BODY).color(t.text))
+                .child(text(progress).font(type_::BODY).color(look.text))
                 .child(dialog_button(
                     "meta-stop",
                     "Stop downloads",
                     false,
-                    t,
                     look,
                     |s: &mut Shell| s.stop_meta(),
                 )),
@@ -2534,10 +2613,9 @@ fn meta_dialog(s: &Shell, t: tok::Theme) -> El {
                 .color(look.select),
         );
     }
-    form = form.child(section_title(t, "DOWNLOAD DEFAULTS & PROVIDERS"));
+    form = form.child(section_title(look, "DOWNLOAD DEFAULTS & PROVIDERS"));
     let settings = s.meta.settings.clone();
     form = form.child(toggle(
-        t,
         look,
         "meta-automatic",
         "Automatically fill missing fields after import or matching",
@@ -2557,7 +2635,6 @@ fn meta_dialog(s: &Shell, t: tok::Theme) -> El {
         ("logo", "Logo", settings.download_logo),
     ] {
         form = form.child(toggle(
-            t,
             look,
             &format!("meta-{field}"),
             label,
@@ -2578,7 +2655,6 @@ fn meta_dialog(s: &Shell, t: tok::Theme) -> El {
         ArtworkProvider::SteamGridDb => "grid",
     };
     form = form.child(segmented(
-        t,
         look,
         "meta-provider",
         provider,
@@ -2595,35 +2671,33 @@ fn meta_dialog(s: &Shell, t: tok::Theme) -> El {
         },
     ));
     if settings.artwork_provider == ArtworkProvider::SteamGridDb {
-        form = form.child(meta_key_field(s, t));
+        form = form.child(meta_key_field(s, look));
     }
     form = form.child(
         text("Automatic downloads use your preferred artwork source, then Steam as fallback. Keys stay in memory for this app session.")
             .font(type_::LABEL)
-            .color(t.text_secondary),
+            .color(look.muted),
     );
     form = form.child(dialog_button(
         "meta-save",
         "Save defaults",
         false,
-        t,
         look,
         |s: &mut Shell| s.save_meta_defaults(),
     ));
     if let Some(game) = game {
-        form = meta_game_section(s, t, look, &game, form);
+        form = meta_game_section(s, look, &game, form);
     } else {
-        form = form.child(section_title(t, "LIBRARY"));
+        form = form.child(section_title(look, "LIBRARY"));
         form = form.child(
             text("Fetch enabled fields for Steam games and executables you have matched. Existing fields are preserved.")
                 .font(type_::LABEL)
-                .color(t.text_secondary),
+                .color(look.muted),
         );
         form = form.child(dialog_button(
             "meta-fill-all",
             "Fill missing metadata for library",
             true,
-            t,
             look,
             |s: &mut Shell| {
                 let games: Vec<Game> = s
@@ -2650,7 +2724,6 @@ fn meta_dialog(s: &Shell, t: tok::Theme) -> El {
         "meta-close",
         "Close",
         false,
-        t,
         look,
         |s: &mut Shell| {
             s.meta.open = false;
@@ -2668,7 +2741,7 @@ fn meta_dialog(s: &Shell, t: tok::Theme) -> El {
         .h_full()
         .child(scrim())
         .child(panel(
-            t,
+            look,
             "meta-dialog",
             title,
             true,
@@ -2680,21 +2753,24 @@ fn meta_dialog(s: &Shell, t: tok::Theme) -> El {
 }
 
 /// Session API key field with a Forget button.
-fn meta_key_field(s: &Shell, t: tok::Theme) -> El {
+fn meta_key_field(s: &Shell, look: Look) -> El {
     let input = text_input(&s.meta.key, type_::BODY.lh(20.0))
         .key("meta-key")
         .label("SteamGridDB API key, optional and never stored")
         .single_line()
         .secure()
         .w_full()
-        .color(t.text)
-        .placeholder("Optional, used once for this session", t.text_secondary)
+        .color(look.text)
+        .placeholder("Optional, used once for this session", look.muted)
         .on_edit(|s: &mut Shell| &mut s.meta.key);
     col()
         .key("meta-key-field")
         .w_full()
         .gap(6.0)
-        .child(section_title(t, "SteamGridDB key — optional, never stored"))
+        .child(section_title(
+            look,
+            "SteamGridDB key — optional, never stored",
+        ))
         .child(
             row()
                 .key("meta-key-row")
@@ -2706,7 +2782,7 @@ fn meta_key_field(s: &Shell, t: tok::Theme) -> El {
                             .w_full()
                             .h(40.0)
                             .radius(radius::MD)
-                            .border(1.0, t.separator)
+                            .border(1.0, look.line)
                             .px(12.0)
                             .center_y()
                             .child(input),
@@ -2716,8 +2792,7 @@ fn meta_key_field(s: &Shell, t: tok::Theme) -> El {
                     "meta-forget",
                     "Forget",
                     false,
-                    t,
-                    Look::of(&s.workspace),
+                    look,
                     |s: &mut Shell| {
                         s.meta.key.text.clear();
                     },
@@ -2726,17 +2801,17 @@ fn meta_key_field(s: &Shell, t: tok::Theme) -> El {
 }
 
 /// Per-game matching, fetching, artwork choice, and saved details.
-fn meta_game_section(s: &Shell, t: tok::Theme, look: Look, game: &Game, mut form: El) -> El {
+fn meta_game_section(s: &Shell, look: Look, game: &Game, mut form: El) -> El {
     let app_id = metadata::app_id(game);
-    form = form.child(section_title(t, "MATCH TITLE"));
+    form = form.child(section_title(look, "MATCH TITLE"));
     if matches!(game.target, Target::Executable { .. }) {
         let query = text_input(&s.meta.query, type_::BODY.lh(20.0))
             .key("meta-query")
             .label("Match this executable to a Steam title")
             .single_line()
             .w_full()
-            .color(t.text)
-            .placeholder("Search Steam titles", t.text_secondary)
+            .color(look.text)
+            .placeholder("Search Steam titles", look.muted)
             .on_edit(|s: &mut Shell| &mut s.meta.query);
         form = form.child(
             row()
@@ -2749,7 +2824,7 @@ fn meta_game_section(s: &Shell, t: tok::Theme, look: Look, game: &Game, mut form
                             .w_full()
                             .h(40.0)
                             .radius(radius::MD)
-                            .border(1.0, t.separator)
+                            .border(1.0, look.line)
                             .px(12.0)
                             .center_y()
                             .child(query),
@@ -2759,7 +2834,6 @@ fn meta_game_section(s: &Shell, t: tok::Theme, look: Look, game: &Game, mut form
                     "meta-search",
                     "Search titles",
                     false,
-                    t,
                     look,
                     |s: &mut Shell| s.begin_search(),
                 )),
@@ -2779,10 +2853,10 @@ fn meta_game_section(s: &Shell, t: tok::Theme, look: Look, game: &Game, mut form
                     .px(12.0)
                     .radius(radius::MD)
                     .center_y()
-                    .fill(t.control_off)
-                    .hover(t.hover)
+                    .fill(look.raised)
+                    .hover(look.hover())
                     .on_press(move |s: &mut Shell| s.bind_app_id(id))
-                    .child(text(mine).font(type_::BODY).color(t.text)),
+                    .child(text(mine).font(type_::BODY).color(look.text)),
             );
         }
         let id_input = text_input(&s.meta.id_input, type_::BODY.lh(20.0))
@@ -2790,8 +2864,8 @@ fn meta_game_section(s: &Shell, t: tok::Theme, look: Look, game: &Game, mut form
             .label("Steam app ID")
             .single_line()
             .w(120.0)
-            .color(t.text)
-            .placeholder("ID", t.text_secondary)
+            .color(look.text)
+            .placeholder("ID", look.muted)
             .on_edit(|s: &mut Shell| &mut s.meta.id_input);
         form = form.child(
             row()
@@ -2804,7 +2878,7 @@ fn meta_game_section(s: &Shell, t: tok::Theme, look: Look, game: &Game, mut form
                         .w(144.0)
                         .h(40.0)
                         .radius(radius::MD)
-                        .border(1.0, t.separator)
+                        .border(1.0, look.line)
                         .px(12.0)
                         .center_y()
                         .child(id_input),
@@ -2813,7 +2887,6 @@ fn meta_game_section(s: &Shell, t: tok::Theme, look: Look, game: &Game, mut form
                     "meta-use-id",
                     "Use this ID",
                     false,
-                    t,
                     look,
                     |s: &mut Shell| s.use_app_id_input(),
                 )),
@@ -2821,7 +2894,7 @@ fn meta_game_section(s: &Shell, t: tok::Theme, look: Look, game: &Game, mut form
         form = form.child(
             text("Matching only selects a metadata source. Your executable remains the launch target.")
                 .font(type_::LABEL)
-                .color(t.text_secondary),
+                .color(look.muted),
         );
     }
     if let Some(id) = app_id {
@@ -2829,10 +2902,9 @@ fn meta_game_section(s: &Shell, t: tok::Theme, look: Look, game: &Game, mut form
             text(format!("Metadata identity: Steam {id}"))
                 .key("meta-identity")
                 .font(type_::BODY)
-                .color(t.text),
+                .color(look.text),
         );
         form = form.child(toggle(
-            t,
             look,
             "meta-replace",
             "Replace existing enabled fields",
@@ -2849,7 +2921,6 @@ fn meta_game_section(s: &Shell, t: tok::Theme, look: Look, game: &Game, mut form
                 "Fill missing metadata & images"
             },
             true,
-            t,
             look,
             |s: &mut Shell| {
                 let replace = s.meta.replace;
@@ -2869,14 +2940,13 @@ fn meta_game_section(s: &Shell, t: tok::Theme, look: Look, game: &Game, mut form
                 s.begin_fetch(games, replace);
             },
         ));
-        form = form.child(section_title(t, "CHOOSE ARTWORK"));
+        form = form.child(section_title(look, "CHOOSE ARTWORK"));
         let kind = match s.meta.kind {
             ImageKind::Cover => "cover",
             ImageKind::Background => "background",
             ImageKind::Logo => "logo",
         };
         form = form.child(segmented(
-            t,
             look,
             "meta-kind",
             kind,
@@ -2898,7 +2968,6 @@ fn meta_game_section(s: &Shell, t: tok::Theme, look: Look, game: &Game, mut form
             "meta-browse",
             "Browse image options",
             false,
-            t,
             look,
             |s: &mut Shell| {
                 if let (Some(target), Some(id)) = (
@@ -2917,16 +2986,16 @@ fn meta_game_section(s: &Shell, t: tok::Theme, look: Look, game: &Game, mut form
             },
         ));
         for (i, preview) in s.meta.images.iter().enumerate() {
-            form = form.child(meta_choice(s, t, look, i, preview));
+            form = form.child(meta_choice(s, look, i, preview));
         }
-        form = form.child(section_title(t, "SAVED INFORMATION"));
-        form = form.child(meta_saved(t, game));
+        form = form.child(section_title(look, "SAVED INFORMATION"));
+        form = form.child(meta_saved(look, game));
     }
     form
 }
 
 /// One downloaded artwork choice with a thumbnail.
-fn meta_choice(s: &Shell, t: tok::Theme, look: Look, index: usize, preview: &ImagePreview) -> El {
+fn meta_choice(s: &Shell, look: Look, index: usize, preview: &ImagePreview) -> El {
     let thumb = match &preview.path {
         Ok(path) => match s.meta.previews.get(path).or_else(|| s.covers.get(path)) {
             Some(pixels) => el()
@@ -2946,14 +3015,14 @@ fn meta_choice(s: &Shell, t: tok::Theme, look: Look, index: usize, preview: &Ima
                 .w(72.0)
                 .h(96.0)
                 .radius(8.0)
-                .fill(t.control_off),
+                .fill(look.raised),
         },
         Err(_) => el()
             .key("choice-image")
             .w(72.0)
             .h(96.0)
             .radius(8.0)
-            .fill(t.control_off),
+            .fill(look.raised),
     };
     let status = match &preview.path {
         Ok(_) => preview.source.clone(),
@@ -2970,15 +3039,18 @@ fn meta_choice(s: &Shell, t: tok::Theme, look: Look, index: usize, preview: &Ima
                 .key("choice-meta")
                 .grow(1.0)
                 .gap(2.0)
-                .child(text(preview.label.clone()).font(type_::BODY).color(t.text))
-                .child(text(status).font(type_::LABEL).color(t.text_secondary)),
+                .child(
+                    text(preview.label.clone())
+                        .font(type_::BODY)
+                        .color(look.text),
+                )
+                .child(text(status).font(type_::LABEL).color(look.muted)),
         );
     if preview.path.is_ok() {
         item = item.child(dialog_button(
             &format!("meta-use-{index}"),
             "Use image",
             false,
-            t,
             look,
             move |s: &mut Shell| s.apply_choice(index),
         ));
@@ -2987,25 +3059,29 @@ fn meta_choice(s: &Shell, t: tok::Theme, look: Look, index: usize, preview: &Ima
 }
 
 /// Saved metadata text for the selected game.
-fn meta_saved(t: tok::Theme, game: &Game) -> El {
+fn meta_saved(look: Look, game: &Game) -> El {
     let m = &game.metadata;
     let mut details = col().key("meta-saved").w_full().gap(4.0);
     if let Some(background) = &m.background {
         details = details.child(
             text(format!("Background: {}", background.display()))
                 .font(type_::LABEL)
-                .color(t.text_secondary),
+                .color(look.muted),
         );
     }
     if let Some(logo) = &m.logo {
         details = details.child(
             text(format!("Logo: {}", logo.display()))
                 .font(type_::LABEL)
-                .color(t.text_secondary),
+                .color(look.muted),
         );
     }
     if !m.description.is_empty() {
-        details = details.child(text(m.description.clone()).font(type_::BODY).color(t.text));
+        details = details.child(
+            text(m.description.clone())
+                .font(type_::BODY)
+                .color(look.text),
+        );
     }
     for (label, value) in [
         ("Released", m.release_date.clone()),
@@ -3017,7 +3093,7 @@ fn meta_saved(t: tok::Theme, game: &Game) -> El {
             details = details.child(
                 text(format!("{label}: {value}"))
                     .font(type_::LABEL)
-                    .color(t.text_secondary),
+                    .color(look.muted),
             );
         }
     }
@@ -3026,7 +3102,7 @@ fn meta_saved(t: tok::Theme, game: &Game) -> El {
             details = details.child(
                 text(format!("{field}: {source}"))
                     .font(type_::LABEL)
-                    .color(t.text_secondary),
+                    .color(look.muted),
             );
         }
     }
@@ -3034,21 +3110,20 @@ fn meta_saved(t: tok::Theme, game: &Game) -> El {
         details = details.child(
             text("No downloaded metadata yet.")
                 .font(type_::LABEL)
-                .color(t.text_secondary),
+                .color(look.muted),
         );
     }
     details
 }
 
-fn workspace_dialog(s: &Shell, t: tok::Theme) -> El {
-    let look = Look::of(&s.workspace);
+fn workspace_dialog(s: &Shell, look: Look) -> El {
     let active = s.workspace.active;
     let mut form = col().key("workspace-form").w_full().gap(10.0).child(
         text("Arrange panels, pick a view, and make the colors yours.")
             .font(type_::LABEL)
-            .color(t.text_secondary),
+            .color(look.muted),
     );
-    form = form.child(section_title(t, "SAVED LAYOUT"));
+    form = form.child(section_title(look, "SAVED LAYOUT"));
     let mut layouts = col().key("workspace-layouts").w_full().gap(4.0);
     for (i, preset) in s.workspace.layouts.iter().enumerate() {
         let current = i == active;
@@ -3064,19 +3139,23 @@ fn workspace_dialog(s: &Shell, t: tok::Theme) -> El {
                 .gap(10.0)
                 .center_y()
                 .radius(radius::MD)
-                .fill(if current { t.card } else { Color::TRANSPARENT })
-                .hover(t.hover)
+                .fill(if current {
+                    look.surface
+                } else {
+                    Color::TRANSPARENT
+                })
+                .hover(look.hover())
                 .on_press(move |s: &mut Shell| s.activate_layout(i))
                 .child(
                     el().key("ws-dot")
                         .size(8.0, 8.0)
                         .radius(4.0)
-                        .fill(if current { look.accent } else { t.control_off }),
+                        .fill(if current { look.accent } else { look.raised }),
                 )
                 .child(
                     text(preset.name.clone())
                         .font(type_::BODY)
-                        .color(if current { t.text } else { t.text_secondary })
+                        .color(if current { look.text } else { look.muted })
                         .grow(1.0),
                 ),
         );
@@ -3087,8 +3166,8 @@ fn workspace_dialog(s: &Shell, t: tok::Theme) -> El {
         .label("Layout name")
         .single_line()
         .w_full()
-        .color(t.text)
-        .placeholder("Layout name", t.text_secondary)
+        .color(look.text)
+        .placeholder("Layout name", look.muted)
         .on_edit(|s: &mut Shell| &mut s.ws_name)
         .on_input_change(|s: &mut Shell, _| {
             let name = s.ws_name.text.clone();
@@ -3099,7 +3178,7 @@ fn workspace_dialog(s: &Shell, t: tok::Theme) -> El {
             .w_full()
             .h(40.0)
             .radius(radius::MD)
-            .border(1.0, t.separator)
+            .border(1.0, look.line)
             .px(12.0)
             .center_y()
             .child(name_input),
@@ -3109,7 +3188,6 @@ fn workspace_dialog(s: &Shell, t: tok::Theme) -> El {
         "workspace-duplicate",
         "Duplicate",
         false,
-        t,
         look,
         |s: &mut Shell| {
             if s.workspace.duplicate().is_ok() {
@@ -3122,7 +3200,6 @@ fn workspace_dialog(s: &Shell, t: tok::Theme) -> El {
             "workspace-delete",
             "Delete",
             false,
-            t,
             look,
             |s: &mut Shell| {
                 s.workspace.layouts.remove(s.workspace.active);
@@ -3132,11 +3209,10 @@ fn workspace_dialog(s: &Shell, t: tok::Theme) -> El {
         ));
     }
     form = form.child(layout_buttons);
-    form = form.child(section_title(t, "ARRANGEMENT"));
+    form = form.child(section_title(look, "ARRANGEMENT"));
     let layout = &s.workspace.current().layout;
-    form = form.child(section_title(t, "Navigation"));
+    form = form.child(section_title(look, "Navigation"));
     form = form.child(segmented(
-        t,
         look,
         "workspace-nav",
         match layout.navigation {
@@ -3157,9 +3233,8 @@ fn workspace_dialog(s: &Shell, t: tok::Theme) -> El {
             };
         },
     ));
-    form = form.child(section_title(t, "Details"));
+    form = form.child(section_title(look, "Details"));
     form = form.child(segmented(
-        t,
         look,
         "workspace-details",
         match layout.details {
@@ -3181,9 +3256,8 @@ fn workspace_dialog(s: &Shell, t: tok::Theme) -> El {
             s.details_open = false;
         },
     ));
-    form = form.child(section_title(t, "View"));
+    form = form.child(section_title(look, "View"));
     form = form.child(segmented(
-        t,
         look,
         "workspace-view",
         match layout.view {
@@ -3211,13 +3285,12 @@ fn workspace_dialog(s: &Shell, t: tok::Theme) -> El {
             .w_full()
             .gap(8.0)
             .center_y()
-            .child(section_title(t, "Tile width"))
+            .child(section_title(look, "Tile width"))
             .child(spacer().grow(1.0))
             .child(dialog_button(
                 "workspace-tile-less",
                 "−",
                 false,
-                t,
                 look,
                 |s: &mut Shell| {
                     let layout = &mut s.workspace.current_mut().layout;
@@ -3229,13 +3302,12 @@ fn workspace_dialog(s: &Shell, t: tok::Theme) -> El {
                     .key("workspace-tile-value")
                     .w(40.0)
                     .font(type_::BODY)
-                    .color(t.text),
+                    .color(look.text),
             )
             .child(dialog_button(
                 "workspace-tile-more",
                 "＋",
                 false,
-                t,
                 look,
                 |s: &mut Shell| {
                     let layout = &mut s.workspace.current_mut().layout;
@@ -3243,15 +3315,69 @@ fn workspace_dialog(s: &Shell, t: tok::Theme) -> El {
                 },
             )),
     );
-    form = form.child(section_title(t, "BACKGROUND"));
-    form = form.child(workspace_swatches(s, t, "workspace-bg", &BACKGROUNDS, true));
-    form = form.child(section_title(t, "ACCENT"));
+    form = form.child(section_title(look, "BACKGROUND"));
     form = form.child(workspace_swatches(
         s,
-        t,
+        look,
+        "workspace-bg",
+        &BACKGROUNDS,
+        "background",
+    ));
+    form = form.child(section_title(look, "NAVIGATION"));
+    form = form.child(workspace_swatches(
+        s,
+        look,
+        "workspace-nav",
+        &NAVS,
+        "navigation",
+    ));
+    form = form.child(section_title(look, "SURFACE"));
+    form = form.child(workspace_swatches(
+        s,
+        look,
+        "workspace-surface",
+        &SURFACES,
+        "surface",
+    ));
+    form = form.child(section_title(look, "TEXT"));
+    form = form.child(workspace_swatches(
+        s,
+        look,
+        "workspace-text",
+        &TEXTS,
+        "text",
+    ));
+    form = form.child(section_title(look, "SECONDARY TEXT"));
+    form = form.child(workspace_swatches(
+        s,
+        look,
+        "workspace-muted",
+        &MUTEDS,
+        "muted",
+    ));
+    form = form.child(section_title(look, "HAIRLINES"));
+    form = form.child(workspace_swatches(
+        s,
+        look,
+        "workspace-line",
+        &LINES,
+        "line",
+    ));
+    form = form.child(section_title(look, "ACCENT"));
+    form = form.child(workspace_swatches(
+        s,
+        look,
         "workspace-accent",
         &ACCENTS,
-        false,
+        "accent",
+    ));
+    form = form.child(section_title(look, "SELECTION"));
+    form = form.child(workspace_swatches(
+        s,
+        look,
+        "workspace-selection",
+        &SELECTIONS,
+        "selection",
     ));
     let body = col()
         .key("workspace-scroll")
@@ -3266,7 +3392,6 @@ fn workspace_dialog(s: &Shell, t: tok::Theme) -> El {
         "workspace-save",
         "Save layout",
         true,
-        t,
         look,
         |s: &mut Shell| s.save_workspace(),
     ));
@@ -3274,7 +3399,6 @@ fn workspace_dialog(s: &Shell, t: tok::Theme) -> El {
         "workspace-cancel",
         "Cancel",
         false,
-        t,
         look,
         |s: &mut Shell| s.cancel_workspace(),
     ));
@@ -3290,7 +3414,7 @@ fn workspace_dialog(s: &Shell, t: tok::Theme) -> El {
         .h_full()
         .child(scrim())
         .child(panel(
-            t,
+            look,
             "workspace-dialog",
             "Build your workspace",
             false,
@@ -3302,22 +3426,29 @@ fn workspace_dialog(s: &Shell, t: tok::Theme) -> El {
 /// Color preset swatches for the workspace editor.
 fn workspace_swatches(
     s: &Shell,
-    t: tok::Theme,
+    look: Look,
     key: &str,
     presets: &[([u8; 3], &str)],
-    background: bool,
+    field: &str,
 ) -> El {
-    let mut items = row().key(key.to_owned()).w_full().gap(8.0);
     let skin = &s.workspace.current().skin;
-    let current = if background {
-        skin.background
-    } else {
-        skin.accent
+    let current = match field {
+        "background" => skin.background,
+        "navigation" => skin.navigation,
+        "surface" => skin.surface,
+        "text" => skin.text,
+        "muted" => skin.muted,
+        "line" => skin.line,
+        "accent" => skin.accent,
+        "selection" => skin.selection,
+        _ => skin.background,
     };
+    let mut items = row().key(key.to_owned()).w_full().gap(8.0);
     for (preset, name) in presets {
         let color = rgb8(*preset);
         let active = *preset == current;
         let preset = *preset;
+        let field = field.to_owned();
         items = items.child(
             el().key(format!("{key}-{name}"))
                 .role("button")
@@ -3326,14 +3457,22 @@ fn workspace_swatches(
                 .size(36.0, 36.0)
                 .radius(18.0)
                 .fill(color)
-                .border(2.0, if active { t.text } else { t.separator })
-                .hover(t.hover)
+                .border(2.0, if active { look.text } else { look.line })
+                .hover(look.hover())
+                .press_scale(0.92)
+                .focus_ring(2.0, 1.0, look.select)
                 .on_press(move |s: &mut Shell| {
                     let skin = &mut s.workspace.current_mut().skin;
-                    if background {
-                        skin.background = preset;
-                    } else {
-                        skin.accent = preset;
+                    match field.as_str() {
+                        "background" => skin.background = preset,
+                        "navigation" => skin.navigation = preset,
+                        "surface" => skin.surface = preset,
+                        "text" => skin.text = preset,
+                        "muted" => skin.muted = preset,
+                        "line" => skin.line = preset,
+                        "accent" => skin.accent = preset,
+                        "selection" => skin.selection = preset,
+                        _ => {}
                     }
                 }),
         );
@@ -3341,111 +3480,126 @@ fn workspace_swatches(
     items
 }
 
-fn toolbar(s: &Shell, t: tok::Theme) -> El {
-    let look = Look::of(&s.workspace);
+fn toolbar(s: &Shell, look: Look, leading: f32, trailing: f32) -> El {
     let search = text_input(&s.query, type_::BODY.lh(20.0))
         .key("search")
         .label("Search games")
         .single_line()
-        .w(248.0)
-        .color(t.text)
-        .placeholder("Search games", t.text_secondary)
+        .w(220.0)
+        .color(look.text)
+        .placeholder("Search games", look.faint)
         .on_edit(|s: &mut Shell| &mut s.query)
         .on_input_change(|s: &mut Shell, _| s.reselect())
         .on_submit(|s: &mut Shell, _| s.play_current());
-    let search_box = el()
+    let search_box = row()
         .key("search-box")
-        .h(40.0)
-        .radius(radius::MD)
-        .border(1.0, t.separator)
-        .px(12.0)
+        .h(38.0)
+        .radius(19.0)
+        .fill(look.surface)
+        .border(1.0, look.line)
+        .px(14.0)
+        .gap(8.0)
         .center_y()
+        .focus_ring(2.0, 1.0, look.select)
+        .child(text("⌕").font(type_::BODY).color(look.faint))
         .child(search);
     let current = s.current();
+    let ready = current.is_some();
     let mut play = row()
         .key("play")
         .role("button")
         .label("Play selected game")
         .focusable(true)
-        .h(40.0)
+        .h(38.0)
         .px(20.0)
-        .radius(radius::MD)
+        .radius(19.0)
         .gap(8.0)
-        .center_y()
-        .fill(if current.is_some() {
-            look.accent
-        } else {
-            t.control_off
-        })
-        .hover(if current.is_some() {
+        .center()
+        .fill(if ready { look.accent } else { look.raised })
+        .hover(if ready {
             look.accent.alpha(0.85)
         } else {
-            t.control_off
+            look.hover()
         })
-        .child(text("▶").font(type_::BODY).color(if current.is_some() {
-            look.ink
-        } else {
-            t.text_secondary
-        }))
-        .child(text("Play").font(type_::LABEL).color(if current.is_some() {
-            look.ink
-        } else {
-            t.text_secondary
-        }));
-    if current.is_some() {
-        play = play.on_press(|s: &mut Shell| s.play_current());
+        .press_scale(0.96)
+        .focus_ring(2.0, 2.0, look.select)
+        .child(
+            text("▶")
+                .font(type_::BODY)
+                .color(if ready { look.ink } else { look.muted }),
+        )
+        .child(
+            text("Play")
+                .font(type_::LABEL)
+                .color(if ready { look.ink } else { look.muted }),
+        );
+    if ready {
+        play = play
+            .shadow(0.0, 16.0, look.accent.alpha(0.35))
+            .on_press(|s: &mut Shell| s.play_current());
     }
-    row()
+    let mut bar = row()
         .key("toolbar")
-        .h(64.0)
+        .h(60.0)
         .w_full()
-        .px(20.0)
-        .gap(16.0)
+        .px(16.0)
+        .gap(12.0)
         .center_y()
         .fill(look.bg)
+        .border_sides([0.0, 0.0, 1.0, 0.0], look.line)
+        .window_drag()
         .child(mark(look))
         .child(
             col()
                 .gap(0.0)
-                .child(text("THE LAUNCHER").font(type_::TITLE).color(t.text))
+                .child(text("The Launcher").font(type_::TITLE).color(look.text))
                 .child(
                     text("your shelf, your rules")
                         .font(type_::LABEL)
-                        .color(t.text_secondary),
+                        .color(look.faint),
                 ),
         )
         .child(spacer().grow(1.0))
         .child(search_box)
-        .child(play)
+        .child(play);
+    if leading > 0.0 {
+        bar = bar.child(spacer().w(leading));
+    }
+    if trailing > 0.0 {
+        bar = bar.child(spacer().w(trailing));
+    }
+    bar
 }
 
 fn mark(look: Look) -> El {
     el().key("mark")
-        .size(30.0, 30.0)
-        .radius(9.0)
+        .size(32.0, 32.0)
+        .radius(10.0)
+        .continuous_corners()
         .fill(look.accent)
+        .gradient(look.accent, look.select)
+        .shadow(0.0, 12.0, look.accent.alpha(0.4))
         .center()
         .child(text("L").font(type_::TITLE).color(look.ink))
 }
 
-fn body(s: &Shell, t: tok::Theme) -> El {
+fn body(s: &Shell, look: Look) -> El {
     let layout = &s.workspace.current().layout;
     let mut middle = row().key("body-row").w_full().grow(1.0).min_h(0.0);
     if layout.navigation == Navigation::Left {
-        middle = middle.child(sidebar(s, t));
+        middle = middle.child(sidebar(s, look));
     }
-    middle = middle.child(shelf(s, t));
+    middle = middle.child(shelf(s, look));
     if layout.details == Details::Right {
-        middle = middle.child(details(s, t));
+        middle = middle.child(details(s, look));
     }
     if layout.navigation == Navigation::Right {
-        middle = middle.child(sidebar(s, t));
+        middle = middle.child(sidebar(s, look));
     }
     middle.key("body")
 }
 
-fn sidebar(s: &Shell, t: tok::Theme) -> El {
-    let look = Look::of(&s.workspace);
+fn sidebar(s: &Shell, look: Look) -> El {
     let width = s.workspace.current().layout.navigation_width;
     let mut list = col()
         .key("sidebar")
@@ -3453,12 +3607,13 @@ fn sidebar(s: &Shell, t: tok::Theme) -> El {
         .h_full()
         .padding(16.0)
         .gap(4.0)
-        .fill(look.bg);
+        .fill(look.nav)
+        .border_sides([0.0, 1.0, 0.0, 0.0], look.line);
     list = list.child(
         text("LIBRARY")
             .key("sidebar-header")
-            .font(type_::LABEL)
-            .color(t.text_secondary)
+            .font(type_::SECTION)
+            .color(look.faint)
             .px(12.0),
     );
     for (filter, key, name) in Filter::ALL {
@@ -3469,44 +3624,53 @@ fn sidebar(s: &Shell, t: tok::Theme) -> El {
             .role("button")
             .label(name)
             .focusable(true)
-            .h(36.0)
+            .h(38.0)
             .w_full()
             .px(12.0)
             .gap(10.0)
             .center_y()
             .radius(radius::MD)
-            .fill(if active { t.card } else { Color::TRANSPARENT })
-            .hover(t.hover)
+            .continuous_corners()
+            .fill(if active {
+                look.active_wash()
+            } else {
+                Color::TRANSPARENT
+            })
+            .hover(look.hover())
+            .press_scale(0.98)
+            .focus_ring(2.0, 1.0, look.select)
             .child(el().key("dot").size(8.0, 8.0).radius(4.0).fill(if active {
                 look.accent
             } else {
-                t.control_off
+                look.faint.alpha(0.5)
             }))
             .child(
                 text(name)
                     .font(type_::BODY)
-                    .color(if active { t.text } else { t.text_secondary })
+                    .color(if active { look.text } else { look.muted })
                     .grow(1.0),
             )
             .child(
                 text(format!("{count}"))
                     .font(type_::LABEL)
-                    .color(t.text_secondary),
+                    .color(if active { look.accent } else { look.faint }),
             )
             .on_press(move |s: &mut Shell| {
                 s.filter = filter;
                 s.reselect();
             });
         if active {
-            item = item.border(1.0, look.accent.alpha(0.45));
+            item =
+                item.border(1.0, look.accent.alpha(0.4))
+                    .shadow(0.0, 8.0, look.accent.alpha(0.12));
         }
         list = list.child(item);
     }
     list = list.child(
         text("ACTIONS")
             .key("actions-header")
-            .font(type_::LABEL)
-            .color(t.text_secondary)
+            .font(type_::SECTION)
+            .color(look.faint)
             .px(12.0),
     );
     for (key, name, primary) in [
@@ -3521,26 +3685,33 @@ fn sidebar(s: &Shell, t: tok::Theme) -> El {
                 .role("button")
                 .label(name)
                 .focusable(true)
-                .h(36.0)
+                .h(38.0)
                 .w_full()
                 .px(12.0)
                 .gap(10.0)
                 .center_y()
                 .radius(radius::MD)
+                .continuous_corners()
                 .fill(if primary {
                     look.accent.alpha(0.16)
                 } else {
                     Color::TRANSPARENT
                 })
-                .hover(t.hover)
+                .border(
+                    1.0,
+                    if primary {
+                        look.accent.alpha(0.35)
+                    } else {
+                        Color::TRANSPARENT
+                    },
+                )
+                .hover(look.hover())
+                .press_scale(0.98)
+                .focus_ring(2.0, 1.0, look.select)
                 .child(
                     text(name.to_owned())
                         .font(type_::BODY)
-                        .color(if primary {
-                            look.accent
-                        } else {
-                            t.text_secondary
-                        })
+                        .color(if primary { look.accent } else { look.muted })
                         .grow(1.0),
                 )
                 .on_press(move |s: &mut Shell| match key {
@@ -3555,13 +3726,12 @@ fn sidebar(s: &Shell, t: tok::Theme) -> El {
         text("Gamepad support is next.")
             .key("sidebar-next")
             .font(type_::LABEL)
-            .color(t.text_secondary)
+            .color(look.faint)
             .px(12.0),
     )
 }
 
-fn shelf(s: &Shell, t: tok::Theme) -> El {
-    let look = Look::of(&s.workspace);
+fn shelf(s: &Shell, look: Look) -> El {
     let visible = s.visible();
     let layout = &s.workspace.current().layout;
     let title = match s.filter {
@@ -3581,17 +3751,27 @@ fn shelf(s: &Shell, t: tok::Theme) -> El {
                 .padding(48.0)
                 .gap(12.0)
                 .center()
-                .child(text("No games found").font(type_::TITLE).color(t.text))
+                .child(
+                    el().key("empty-mark")
+                        .size(56.0, 56.0)
+                        .radius(18.0)
+                        .continuous_corners()
+                        .fill(look.surface)
+                        .gradient(look.accent.alpha(0.5), look.select.alpha(0.5))
+                        .shadow(0.0, 20.0, look.accent.alpha(0.25))
+                        .center()
+                        .child(text("◈").font(type_::TITLE).color(look.text)),
+                )
+                .child(text("No games found").font(type_::TITLE).color(look.text))
                 .child(
                     text("Try another search or collection.")
                         .font(type_::BODY)
-                        .color(t.text_secondary),
+                        .color(look.muted),
                 )
                 .child(dialog_button(
                     "empty-add",
                     "＋ Add game",
                     true,
-                    t,
                     look,
                     |s: &mut Shell| {
                         s.open_add();
@@ -3605,19 +3785,19 @@ fn shelf(s: &Shell, t: tok::Theme) -> El {
                 // shelf fits, so wide windows fill instead of leaving a void.
                 let mut flow = row().key("flow").w_full().flex_wrap().gap(16.0);
                 for &i in &visible {
-                    flow = flow.child(card(s, t, look, i, tile));
+                    flow = flow.child(card(s, look, i, tile));
                 }
                 grid = grid.child(flow);
             }
             View::List => {
                 for &i in &visible {
-                    grid = grid.child(list_row(s, t, look, i));
+                    grid = grid.child(list_row(s, look, i));
                 }
             }
             View::Shelf => {
                 let mut strip = row().key("strip").gap(16.0).padding(4.0);
                 for &i in &visible {
-                    strip = strip.child(shelf_tile(s, t, look, i, tile));
+                    strip = strip.child(shelf_tile(s, look, i, tile));
                 }
                 grid = grid.child(
                     el().key("strip-viewport")
@@ -3642,18 +3822,26 @@ fn shelf(s: &Shell, t: tok::Theme) -> El {
             row()
                 .key("shelf-header")
                 .w_full()
-                .h(52.0)
+                .h(56.0)
                 .px(20.0)
                 .center_y()
                 .gap(10.0)
-                .child(text(title).font(type_::TITLE).color(t.text))
+                .child(text(title).font(type_::TITLE).color(look.text))
                 .child(
-                    text(format!("{}", visible.len()))
-                        .font(type_::LABEL)
-                        .color(t.text_secondary),
+                    el().key("shelf-count")
+                        .px(10.0)
+                        .py(3.0)
+                        .radius(10.0)
+                        .fill(look.surface)
+                        .border(1.0, look.line)
+                        .child(
+                            text(format!("{}", visible.len()))
+                                .font(type_::LABEL)
+                                .color(look.muted),
+                        ),
                 ),
         )
-        .child(el().key("shelf-rule").h(1.0).w_full().fill(t.separator))
+        .child(el().key("shelf-rule").h(1.0).w_full().fill(look.line))
         .child(
             grid.scroll(ScrollSpec {
                 stick_bottom: false,
@@ -3665,7 +3853,7 @@ fn shelf(s: &Shell, t: tok::Theme) -> El {
 
 /// Game artwork: the local cover when one is set and decoded, else the
 /// generated gradient with initials.
-fn cover_art(s: &Shell, t: tok::Theme, game: &Game, width: f32, height: f32, rounded: f32) -> El {
+fn cover_art(s: &Shell, look: Look, game: &Game, width: f32, height: f32, rounded: f32) -> El {
     let art = el()
         .key("art")
         .w(width)
@@ -3681,14 +3869,14 @@ fn cover_art(s: &Shell, t: tok::Theme, game: &Game, width: f32, height: f32, rou
         );
     }
     let (top, bottom) = gradient(&game.name);
-    art.fill(t.card).gradient(top, bottom).center().child(
+    art.fill(look.surface).gradient(top, bottom).center().child(
         text(initials(&game.name))
             .font(type_::TITLE)
             .color(Color::WHITE.alpha(0.92)),
     )
 }
 
-fn card(s: &Shell, t: tok::Theme, look: Look, index: usize, tile: f32) -> El {
+fn card(s: &Shell, look: Look, index: usize, tile: f32) -> El {
     let Some(game) = s.library.games.get(index) else {
         return el().key(format!("game-{index}")).size(tile, tile + 52.0);
     };
@@ -3702,15 +3890,33 @@ fn card(s: &Shell, t: tok::Theme, look: Look, index: usize, tile: f32) -> El {
         .focusable(true)
         .w(tile)
         .radius(radius::LG)
-        .fill(t.card)
-        .border(
+        .continuous_corners()
+        .fill(look.surface)
+        .border_gradient(
             if selected { 2.0 } else { 1.0 },
-            if selected { look.select } else { t.separator },
+            if selected {
+                look.select
+            } else {
+                look.rim_top()
+            },
+            if selected { look.select } else { look.line },
         )
         .motion(motion::SNAPPY)
-        .hover(t.hover)
+        .hover(look.hover())
+        .press(look.pressed())
+        .press_scale(0.97)
+        .focus_ring(2.0, 2.0, look.select)
+        .shadow(
+            0.0,
+            if selected { 20.0 } else { 12.0 },
+            if selected {
+                look.select.alpha(0.25)
+            } else {
+                Color::BLACK.alpha(0.35)
+            },
+        )
         .on_press(move |s: &mut Shell| s.select_game(index))
-        .child(cover_art(s, t, game, tile, tile * 0.56, radius::LG))
+        .child(cover_art(s, look, game, tile, tile * 0.56, radius::LG))
         .child(
             col()
                 .key("meta")
@@ -3720,7 +3926,7 @@ fn card(s: &Shell, t: tok::Theme, look: Look, index: usize, tile: f32) -> El {
                 .child(
                     text(name.clone())
                         .font(type_::BODY)
-                        .color(t.text)
+                        .color(look.text)
                         .truncate(),
                 )
                 .child(
@@ -3743,11 +3949,7 @@ fn card(s: &Shell, t: tok::Theme, look: Look, index: usize, tile: f32) -> El {
                                 .role("button")
                                 .label(if favorite { "Unfavorite" } else { "Favorite" })
                                 .font(type_::BODY)
-                                .color(if favorite {
-                                    look.accent
-                                } else {
-                                    t.text_secondary
-                                })
+                                .color(if favorite { look.accent } else { look.muted })
                                 .on_press(move |s: &mut Shell| s.toggle_favorite(index)),
                         ),
                 ),
@@ -3755,7 +3957,7 @@ fn card(s: &Shell, t: tok::Theme, look: Look, index: usize, tile: f32) -> El {
 }
 
 /// Full-width list row: small cover, name, source/status, favorite.
-fn list_row(s: &Shell, t: tok::Theme, look: Look, index: usize) -> El {
+fn list_row(s: &Shell, look: Look, index: usize) -> El {
     let Some(game) = s.library.games.get(index) else {
         return el().key(format!("game-{index}")).w_full().h(76.0);
     };
@@ -3784,18 +3986,22 @@ fn list_row(s: &Shell, t: tok::Theme, look: Look, index: usize) -> El {
         .gap(12.0)
         .center_y()
         .radius(radius::MD)
+        .continuous_corners()
         .fill(if selected {
-            look.select.alpha(0.12)
+            look.select_wash()
         } else {
             Color::TRANSPARENT
         })
-        .hover(t.hover)
+        .hover(look.hover())
+        .press(look.pressed())
+        .press_scale(0.99)
+        .focus_ring(2.0, 1.0, look.select)
         .border(
             if selected { 2.0 } else { 1.0 },
-            if selected { look.select } else { t.separator },
+            if selected { look.select } else { look.line },
         )
         .on_press(move |s: &mut Shell| s.select_game(index))
-        .child(cover_art(s, t, game, 48.0, 60.0, 8.0))
+        .child(cover_art(s, look, game, 48.0, 60.0, 8.0))
         .child(
             col()
                 .key("row-meta")
@@ -3804,13 +4010,13 @@ fn list_row(s: &Shell, t: tok::Theme, look: Look, index: usize) -> El {
                 .child(
                     text(name.clone())
                         .font(type_::BODY)
-                        .color(t.text)
+                        .color(look.text)
                         .truncate(),
                 )
                 .child(
                     text(format!("{} / {status}", game.source()))
                         .font(type_::LABEL)
-                        .color(t.text_secondary)
+                        .color(look.muted)
                         .truncate(),
                 ),
         )
@@ -3820,17 +4026,13 @@ fn list_row(s: &Shell, t: tok::Theme, look: Look, index: usize) -> El {
                 .role("button")
                 .label(if favorite { "Unfavorite" } else { "Favorite" })
                 .font(type_::TITLE)
-                .color(if favorite {
-                    look.accent
-                } else {
-                    t.text_secondary
-                })
+                .color(if favorite { look.accent } else { look.muted })
                 .on_press(move |s: &mut Shell| s.toggle_favorite(index)),
         )
 }
 
 /// Tall shelf tile for the horizontal strip.
-fn shelf_tile(s: &Shell, t: tok::Theme, look: Look, index: usize, tile: f32) -> El {
+fn shelf_tile(s: &Shell, look: Look, index: usize, tile: f32) -> El {
     let Some(game) = s.library.games.get(index) else {
         return el().key(format!("game-{index}")).size(tile, tile * 1.25);
     };
@@ -3843,79 +4045,102 @@ fn shelf_tile(s: &Shell, t: tok::Theme, look: Look, index: usize, tile: f32) -> 
         .focusable(true)
         .w(tile)
         .gap(8.0)
+        .press_scale(0.97)
+        .focus_ring(2.0, 2.0, look.select)
         .on_press(move |s: &mut Shell| s.select_game(index))
         .child(
             el().key("tile-frame")
                 .w_full()
                 .radius(radius::LG)
-                .border(
+                .continuous_corners()
+                .border_gradient(
                     if selected { 3.0 } else { 1.0 },
-                    if selected { look.select } else { t.separator },
+                    if selected {
+                        look.select
+                    } else {
+                        look.rim_top()
+                    },
+                    if selected { look.select } else { look.line },
                 )
-                .child(cover_art(s, t, game, tile - 2.0, tile * 1.25, radius::LG)),
+                .shadow(
+                    0.0,
+                    if selected { 20.0 } else { 12.0 },
+                    if selected {
+                        look.select.alpha(0.25)
+                    } else {
+                        Color::BLACK.alpha(0.35)
+                    },
+                )
+                .child(cover_art(
+                    s,
+                    look,
+                    game,
+                    tile - 2.0,
+                    tile * 1.25,
+                    radius::LG,
+                )),
         )
         .child(
             text(name.clone())
                 .font(type_::LABEL)
-                .color(t.text)
+                .color(look.text)
                 .truncate(),
         )
 }
 
-fn details(s: &Shell, t: tok::Theme) -> El {
-    let look = Look::of(&s.workspace);
+fn details(s: &Shell, look: Look) -> El {
     let width = s.workspace.current().layout.details_width;
     let Some(index) = s.current() else {
-        return details_shell(t, width)
-            .child(text("Nothing selected").font(type_::TITLE).color(t.text));
+        return details_shell(look, width)
+            .child(text("Nothing selected").font(type_::TITLE).color(look.text));
     };
     let Some(game) = s.library.games.get(index).cloned() else {
-        return details_shell(t, width);
+        return details_shell(look, width);
     };
-    details_shell(t, width)
-        .child(details_cover(s, t, &game, width))
+    details_shell(look, width)
+        .child(details_cover(s, look, &game, width))
         .child(
             text(game.name.clone())
                 .key("details-name")
                 .font(type_::TITLE)
-                .color(t.text),
+                .color(look.text),
         )
-        .child(details_badges(t, look, &game, game.favorite))
+        .child(details_badges(look, &game, game.favorite))
         .child(
             text(target_line(&game))
                 .key("target")
                 .font(type_::LABEL)
-                .color(t.text_secondary),
+                .color(look.muted),
         )
         .child(
             text(played_line(&game))
                 .key("played")
                 .font(type_::LABEL)
-                .color(t.text_secondary),
+                .color(look.muted),
         )
-        .child(meta_summary(t, &game))
+        .child(meta_summary(look, &game))
         .child(play_button(look, &game))
-        .child(favorite_button(t, look, index, &game))
-        .child(details_manage(t, index, &game))
-        .child(details_media(t, index, &game))
+        .child(favorite_button(look, index, &game))
+        .child(details_manage(look, index, &game))
+        .child(details_media(look, index, &game))
 }
 
 /// Details container: right column.
-fn details_shell(t: tok::Theme, width: f32) -> El {
+fn details_shell(look: Look, width: f32) -> El {
     col()
         .key("details")
         .w(width)
         .h_full()
         .padding(20.0)
         .gap(12.0)
-        .fill(t.card)
+        .fill(look.nav)
+        .border_sides([0.0, 0.0, 0.0, 1.0], look.line)
 }
 
 /// Game details modal: the replacement for the old bottom strip. Selecting a
 /// game opens it; Escape, outside click, or Close dismisses it without losing
 /// the selection.
-fn game_modal(s: &Shell, t: tok::Theme) -> El {
-    let look = Look::of(&s.workspace);
+fn game_modal(s: &Shell, look: Look) -> El {
     let Some(index) = s.current() else {
         return el().key("game-modal");
     };
@@ -3926,35 +4151,38 @@ fn game_modal(s: &Shell, t: tok::Theme) -> El {
         .key("game-modal-body")
         .w_full()
         .gap(12.0)
-        .child(details_cover(s, t, &game, 560.0))
+        .child(modal_cover(s, look, &game))
         .child(
             text(game.name.clone())
                 .key("details-name")
                 .font(type_::TITLE)
-                .color(t.text),
+                .color(look.text),
         )
-        .child(details_badges(t, look, &game, game.favorite))
+        .child(details_badges(look, &game, game.favorite))
         .child(
             text(target_line(&game))
                 .key("target")
                 .font(type_::LABEL)
-                .color(t.text_secondary),
+                .color(look.muted),
         )
         .child(
             text(played_line(&game))
                 .key("played")
                 .font(type_::LABEL)
-                .color(t.text_secondary),
+                .color(look.muted),
         )
-        .child(meta_summary(t, &game))
+        .child(meta_summary(look, &game))
         .child(play_button(look, &game))
-        .child(favorite_button(t, look, index, &game))
-        .child(details_manage(t, index, &game))
-        .child(details_media(t, index, &game));
+        .child(favorite_button(look, index, &game))
+        .child(details_manage(look, index, &game))
+        .child(details_media(look, index, &game));
+    // The scroll fills whatever room the sheet leaves it, so short windows
+    // shrink the artwork list instead of clipping the dialog.
     let scroll = col()
         .key("game-modal-scroll")
         .w_full()
-        .max_h(560.0)
+        .grow(1.0)
+        .min_h(0.0)
         .scroll(ScrollSpec {
             stick_bottom: false,
         })
@@ -3963,10 +4191,14 @@ fn game_modal(s: &Shell, t: tok::Theme) -> El {
         .key("game-modal-panel")
         .role("dialog")
         .label(game.name.clone())
-        .w(560.0)
-        .radius(radius::LG)
-        .fill(t.card)
-        .border(1.0, t.separator)
+        .w_full()
+        .max_w(600.0)
+        .max_h(560.0)
+        .radius(16.0)
+        .continuous_corners()
+        .fill(look.surface)
+        .border_gradient(1.0, look.rim_top(), look.line)
+        .shadow(0.0, 32.0, Color::BLACK.alpha(0.5))
         .padding(24.0)
         .gap(12.0)
         .modal(true, |s: &mut Shell| s.close_details())
@@ -3979,7 +4211,7 @@ fn game_modal(s: &Shell, t: tok::Theme) -> El {
                 .child(
                     text("Game details")
                         .font(type_::LABEL)
-                        .color(t.text_secondary)
+                        .color(look.muted)
                         .grow(1.0),
                 )
                 .child(
@@ -3992,10 +4224,10 @@ fn game_modal(s: &Shell, t: tok::Theme) -> El {
                         .px(12.0)
                         .radius(radius::MD)
                         .center()
-                        .fill(t.control_off)
-                        .hover(t.hover)
+                        .fill(look.raised)
+                        .hover(look.hover())
                         .on_press(|s: &mut Shell| s.close_details())
-                        .child(text("✕").font(type_::LABEL).color(t.text)),
+                        .child(text("✕").font(type_::LABEL).color(look.text)),
                 ),
         )
         .child(scroll)
@@ -4003,7 +4235,6 @@ fn game_modal(s: &Shell, t: tok::Theme) -> El {
             "game-modal-done",
             "Close",
             false,
-            t,
             look,
             |s: &mut Shell| s.close_details(),
         ));
@@ -4018,8 +4249,37 @@ fn game_modal(s: &Shell, t: tok::Theme) -> El {
                 .w_full()
                 .h_full()
                 .center()
+                .padding(16.0)
                 .child(sheet),
         )
+}
+
+/// Fluid cover banner for the modal: full width up to a cap, so narrow
+/// windows never clip it and wide ones keep a tidy banner.
+fn modal_cover(s: &Shell, look: Look, game: &Game) -> El {
+    let art = el()
+        .key("art")
+        .w_full()
+        .max_w(520.0)
+        .h(180.0)
+        .radius(radius::LG)
+        .clip_rounded(radius::LG);
+    let art = if let Some(pixels) = game.cover.as_ref().and_then(|path| s.covers.get(path)) {
+        art.child(
+            el().key("art-image")
+                .w_full()
+                .h_full()
+                .pixels_fit(pixels, SurfaceFit::Fill),
+        )
+    } else {
+        let (top, bottom) = gradient(&game.name);
+        art.fill(look.surface).gradient(top, bottom).center().child(
+            text(initials(&game.name))
+                .font(type_::TITLE)
+                .color(Color::WHITE.alpha(0.92)),
+        )
+    };
+    el().key("cover").w_full().center().child(art)
 }
 
 fn play_button(look: Look, game: &Game) -> El {
@@ -4030,8 +4290,9 @@ fn play_button(look: Look, game: &Game) -> El {
     row()
         .key("actions")
         .w_full()
-        .h(44.0)
-        .radius(radius::MD)
+        .h(46.0)
+        .radius(12.0)
+        .continuous_corners()
         .center()
         .gap(8.0)
         .fill(look.accent)
@@ -4039,6 +4300,10 @@ fn play_button(look: Look, game: &Game) -> El {
         .label(format!("{action} {}", game.name))
         .focusable(true)
         .hover(look.accent.alpha(0.85))
+        .press(look.pressed())
+        .press_scale(0.98)
+        .focus_ring(2.0, 2.0, look.select)
+        .shadow(0.0, 16.0, look.accent.alpha(0.35))
         .on_press(|s: &mut Shell| s.play_current())
         .child(
             text(format!("▶ {action}"))
@@ -4047,15 +4312,17 @@ fn play_button(look: Look, game: &Game) -> El {
         )
 }
 
-fn favorite_button(t: tok::Theme, look: Look, index: usize, game: &Game) -> El {
+fn favorite_button(look: Look, index: usize, game: &Game) -> El {
     let favorite = game.favorite;
     row()
         .key("favorite")
         .w_full()
         .h(40.0)
         .radius(radius::MD)
+        .continuous_corners()
         .center()
-        .fill(t.control_off)
+        .fill(look.raised)
+        .border(1.0, look.line)
         .role("button")
         .label(if favorite {
             "Remove from favorites"
@@ -4063,7 +4330,10 @@ fn favorite_button(t: tok::Theme, look: Look, index: usize, game: &Game) -> El {
             "Add to favorites"
         })
         .focusable(true)
-        .hover(t.hover)
+        .hover(look.hover())
+        .press(look.pressed())
+        .press_scale(0.98)
+        .focus_ring(2.0, 1.0, look.select)
         .on_press(move |s: &mut Shell| s.toggle_favorite(index))
         .child(
             text(if favorite {
@@ -4072,19 +4342,19 @@ fn favorite_button(t: tok::Theme, look: Look, index: usize, game: &Game) -> El {
                 "♡ Favorite"
             })
             .font(type_::LABEL)
-            .color(if favorite { look.accent } else { t.text }),
+            .color(if favorite { look.accent } else { look.text }),
         )
 }
 
-fn details_cover(s: &Shell, t: tok::Theme, game: &Game, width: f32) -> El {
+fn details_cover(s: &Shell, look: Look, game: &Game, width: f32) -> El {
     el().key("cover")
         .w_full()
         .h(200.0)
         .center()
-        .child(cover_art(s, t, game, width - 40.0, 200.0, radius::LG))
+        .child(cover_art(s, look, game, width - 40.0, 200.0, radius::LG))
 }
 
-fn details_badges(t: tok::Theme, look: Look, game: &Game, favorite: bool) -> El {
+fn details_badges(look: Look, game: &Game, favorite: bool) -> El {
     row()
         .key("badges")
         .w_full()
@@ -4104,12 +4374,12 @@ fn details_badges(t: tok::Theme, look: Look, game: &Game, favorite: bool) -> El 
             } else {
                 "Not favorited"
             },
-            t.text_secondary,
+            look.muted,
         ))
 }
 
 /// One-line saved-metadata summary for the details pane.
-fn meta_summary(t: tok::Theme, game: &Game) -> El {
+fn meta_summary(look: Look, game: &Game) -> El {
     let m = &game.metadata;
     let mut parts = Vec::new();
     if !m.release_date.is_empty() {
@@ -4129,12 +4399,13 @@ fn meta_summary(t: tok::Theme, game: &Game) -> El {
     text(line)
         .key("meta-summary")
         .font(type_::LABEL)
-        .color(t.text_secondary)
+        .color(look.muted)
 }
 
-/// Metadata and cover-art entry points under the manage row.
-fn details_media(t: tok::Theme, index: usize, game: &Game) -> El {
-    let mut buttons = row().key("media").w_full().gap(12.0).center_y();
+/// Metadata and cover-art entry points under the manage row. Buttons wrap
+/// onto a second line instead of squeezing on narrow dialogs.
+fn details_media(look: Look, index: usize, game: &Game) -> El {
+    let mut buttons = row().key("media").w_full().gap(12.0).center_y().flex_wrap();
     buttons = buttons.child(
         row()
             .key("details-metadata")
@@ -4144,11 +4415,16 @@ fn details_media(t: tok::Theme, index: usize, game: &Game) -> El {
             .h(36.0)
             .grow(1.0)
             .radius(radius::MD)
+            .continuous_corners()
             .center()
-            .fill(t.control_off)
-            .hover(t.hover)
+            .fill(look.raised)
+            .border(1.0, look.line)
+            .hover(look.hover())
+            .press(look.pressed())
+            .press_scale(0.97)
+            .focus_ring(2.0, 1.0, look.select)
             .on_press(move |s: &mut Shell| s.open_meta(Some(index)))
-            .child(text("Metadata").font(type_::LABEL).color(t.text)),
+            .child(text("Metadata").font(type_::LABEL).color(look.text)),
     );
     buttons = buttons.child(
         row()
@@ -4159,11 +4435,16 @@ fn details_media(t: tok::Theme, index: usize, game: &Game) -> El {
             .h(36.0)
             .grow(1.0)
             .radius(radius::MD)
+            .continuous_corners()
             .center()
-            .fill(t.control_off)
-            .hover(t.hover)
+            .fill(look.raised)
+            .border(1.0, look.line)
+            .hover(look.hover())
+            .press(look.pressed())
+            .press_scale(0.97)
+            .focus_ring(2.0, 1.0, look.select)
             .on_press_tx(move |s: &mut Shell, tx: &mut Tx| s.request_cover(index, tx))
-            .child(text("Cover art…").font(type_::LABEL).color(t.text)),
+            .child(text("Cover art…").font(type_::LABEL).color(look.text)),
     );
     if game.cover.is_some() {
         buttons = buttons.child(
@@ -4175,11 +4456,16 @@ fn details_media(t: tok::Theme, index: usize, game: &Game) -> El {
                 .h(36.0)
                 .px(12.0)
                 .radius(radius::MD)
+                .continuous_corners()
                 .center()
-                .fill(t.control_off)
-                .hover(t.hover)
+                .fill(look.raised)
+                .border(1.0, look.line)
+                .hover(look.hover())
+                .press(look.pressed())
+                .press_scale(0.97)
+                .focus_ring(2.0, 1.0, look.select)
                 .on_press(move |s: &mut Shell| s.remove_cover(index))
-                .child(text("No cover").font(type_::LABEL).color(t.text)),
+                .child(text("No cover").font(type_::LABEL).color(look.text)),
         );
     }
     buttons
@@ -4187,10 +4473,15 @@ fn details_media(t: tok::Theme, index: usize, game: &Game) -> El {
 
 /// Edit/remove row under the favorite toggle. Steam entries hide or restore
 /// instead of editing; hidden entries offer only a restore.
-fn details_manage(t: tok::Theme, index: usize, game: &Game) -> El {
+fn details_manage(look: Look, index: usize, game: &Game) -> El {
     let hidden = game.hidden;
     let executable = matches!(game.target, Target::Executable { .. });
-    let mut buttons = row().key("manage").w_full().gap(12.0).center_y();
+    let mut buttons = row()
+        .key("manage")
+        .w_full()
+        .gap(12.0)
+        .center_y()
+        .flex_wrap();
     if !hidden && executable {
         buttons = buttons.child(
             row()
@@ -4201,11 +4492,16 @@ fn details_manage(t: tok::Theme, index: usize, game: &Game) -> El {
                 .h(36.0)
                 .grow(1.0)
                 .radius(radius::MD)
+                .continuous_corners()
                 .center()
-                .fill(t.control_off)
-                .hover(t.hover)
+                .fill(look.raised)
+                .border(1.0, look.line)
+                .hover(look.hover())
+                .press(look.pressed())
+                .press_scale(0.97)
+                .focus_ring(2.0, 1.0, look.select)
                 .on_press(move |s: &mut Shell| s.open_edit(index))
-                .child(text("Edit").font(type_::LABEL).color(t.text)),
+                .child(text("Edit").font(type_::LABEL).color(look.text)),
         );
     }
     let (key, label) = if hidden {
@@ -4224,9 +4520,14 @@ fn details_manage(t: tok::Theme, index: usize, game: &Game) -> El {
             .h(36.0)
             .grow(1.0)
             .radius(radius::MD)
+            .continuous_corners()
             .center()
-            .fill(t.control_off)
-            .hover(t.hover)
+            .fill(look.raised)
+            .border(1.0, look.line)
+            .hover(look.hover())
+            .press(look.pressed())
+            .press_scale(0.97)
+            .focus_ring(2.0, 1.0, look.select)
             .on_press(move |s: &mut Shell| {
                 if hidden {
                     s.restore_hidden(index);
@@ -4234,7 +4535,7 @@ fn details_manage(t: tok::Theme, index: usize, game: &Game) -> El {
                     s.begin_remove();
                 }
             })
-            .child(text(label.to_owned()).font(type_::LABEL).color(t.text)),
+            .child(text(label.to_owned()).font(type_::LABEL).color(look.text)),
     );
     buttons
 }
@@ -4243,8 +4544,9 @@ fn badge(label: &str, color: Color) -> El {
     el().key(format!("badge-{label}"))
         .px(10.0)
         .py(4.0)
-        .radius(6.0)
+        .radius(8.0)
         .fill(color.alpha(0.14))
+        .border(1.0, color.alpha(0.35))
         .child(text(label).font(type_::LABEL).color(color))
 }
 
@@ -4255,31 +4557,42 @@ fn target_line(game: &Game) -> String {
     }
 }
 
-fn footer(s: &Shell, t: tok::Theme) -> El {
-    let look = Look::of(&s.workspace);
+fn footer(s: &Shell, look: Look) -> El {
     let status = match &s.notice {
         Some(notice) => notice.clone(),
         None => "Select a game, then press Play".into(),
     };
+    let is_error = status.starts_with("Could not")
+        || status.starts_with("Cannot")
+        || status.starts_with("Game started, but");
     row()
         .key("footer")
-        .h(40.0)
+        .h(42.0)
         .w_full()
         .px(20.0)
         .gap(12.0)
         .center_y()
         .fill(look.bg)
+        .border_sides([1.0, 0.0, 0.0, 0.0], look.line)
         .child(
-            text(format!("{} games", s.library.games.len()))
-                .font(type_::LABEL)
-                .color(t.text_secondary),
+            el().key("footer-count")
+                .px(10.0)
+                .py(3.0)
+                .radius(10.0)
+                .fill(look.surface)
+                .border(1.0, look.line)
+                .child(
+                    text(format!("{} games", s.library.games.len()))
+                        .font(type_::LABEL)
+                        .color(look.muted),
+                ),
         )
         .child(spacer().grow(1.0))
         .child(
             text(status)
                 .key("status")
                 .font(type_::LABEL)
-                .color(t.text_secondary),
+                .color(if is_error { look.err } else { look.faint }),
         )
 }
 
@@ -4359,6 +4672,33 @@ mod tests {
         assert!(!rt.state.details_open);
         assert!(rt.find("game-modal").is_none(), "close dismisses the modal");
         assert_eq!(rt.state.selected, Some(0), "selection survives close");
+    }
+
+    #[test]
+    fn game_modal_scales_to_small_windows() {
+        let mut rt = Runtime::new(Shell::demo(), view, (480.0, 600.0), Env::new(true, 2.0));
+        rt.frame(0.0);
+        click(&mut rt, "game-0");
+        let panel = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("game-modal-panel"))
+            .expect("modal panel renders");
+        assert!(
+            panel.rect[2] <= 480.0 - 16.0,
+            "panel fits a narrow window: {:?}",
+            panel.rect
+        );
+        assert!(
+            panel.rect[0] >= 8.0,
+            "panel keeps a margin from the edge: {:?}",
+            panel.rect
+        );
+        assert!(
+            panel.rect[3] <= 600.0 - 16.0,
+            "panel fits a short window: {:?}",
+            panel.rect
+        );
     }
 
     #[test]
