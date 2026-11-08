@@ -3503,41 +3503,6 @@ fn toolbar(s: &Shell, look: Look, leading: f32, trailing: f32) -> El {
         .focus_ring(2.0, 1.0, look.select)
         .child(text("⌕").font(type_::BODY).color(look.faint))
         .child(search);
-    let current = s.current();
-    let ready = current.is_some();
-    let mut play = row()
-        .key("play")
-        .role("button")
-        .label("Play selected game")
-        .focusable(true)
-        .h(38.0)
-        .px(20.0)
-        .radius(19.0)
-        .gap(8.0)
-        .center()
-        .fill(if ready { look.accent } else { look.raised })
-        .hover(if ready {
-            look.accent.alpha(0.85)
-        } else {
-            look.hover()
-        })
-        .press_scale(0.96)
-        .focus_ring(2.0, 2.0, look.select)
-        .child(
-            text("▶")
-                .font(type_::BODY)
-                .color(if ready { look.ink } else { look.muted }),
-        )
-        .child(
-            text("Play")
-                .font(type_::LABEL)
-                .color(if ready { look.ink } else { look.muted }),
-        );
-    if ready {
-        play = play
-            .shadow(0.0, 16.0, look.accent.alpha(0.35))
-            .on_press(|s: &mut Shell| s.play_current());
-    }
     let mut bar = row()
         .key("toolbar")
         .h(60.0)
@@ -3560,8 +3525,7 @@ fn toolbar(s: &Shell, look: Look, leading: f32, trailing: f32) -> El {
                 ),
         )
         .child(spacer().grow(1.0))
-        .child(search_box)
-        .child(play);
+        .child(search_box);
     if leading > 0.0 {
         bar = bar.child(spacer().w(leading));
     }
@@ -4564,7 +4528,7 @@ fn target_line(game: &Game) -> String {
 fn footer(s: &Shell, look: Look) -> El {
     let status = match &s.notice {
         Some(notice) => notice.clone(),
-        None => "Select a game, then press Play".into(),
+        None => "Select a game to see details".into(),
     };
     let is_error = status.starts_with("Could not")
         || status.starts_with("Cannot")

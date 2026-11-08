@@ -41,7 +41,7 @@ See [the Playnite reference and parity table](steam-integration.md). Local disco
 
 The rendering backend is Rune (native GPU, headless-capable). A separate `workspace.json` stores named panel arrangements, views, sizes, and skin colors; it contains no games or secrets. The workspace editor overlay edits layouts live, validates on save, and restores the snapshot on cancel. Presentation changes do not migrate or rewrite game launch targets.
 
-The launcher draws its own titlebar (`App::titlebar`, 60pt) with a draggable toolbar, brand mark, search pill, and Play action; Rune keeps the platform's window controls over it (traffic lights on macOS, caption buttons on Windows) with `chrome_insets` padding. File pickers are native OS dialogs through Rune. Windows Snap/high-DPI behavior still requires native validation. On Linux the native frame stays and the insets report zero.
+The launcher draws its own titlebar (`App::titlebar`, 60pt) with a draggable toolbar, brand mark, and search pill; launching happens from the game details modal. Rune keeps the platform's window controls over it (traffic lights on macOS, caption buttons on Windows) with `chrome_insets` padding. File pickers are native OS dialogs through Rune. Windows Snap/high-DPI behavior still requires native validation. On Linux the native frame stays and the insets report zero.
 
 ## Visual direction
 

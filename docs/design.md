@@ -14,7 +14,7 @@ The launcher takes its cues from console collection screens and physical game ca
 | `MINT` | `#9fdecc` | Active collection, keyboard focus, selection |
 | `LILAC` | `#b7afe0` | Original fallback artwork |
 
-Rune renders the interface with its embedded Inter face. The launcher draws a custom 60pt titlebar (draggable toolbar with brand, search, and Play) and keeps the platform window controls clear via chrome insets. See [workspace customization](customization.md).
+Rune renders the interface with its embedded Inter face. The launcher draws a custom 60pt titlebar (draggable toolbar with brand and search) and keeps the platform window controls clear via chrome insets. See [workspace customization](customization.md).
 
 ## Composition
 
