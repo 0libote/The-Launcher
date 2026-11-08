@@ -4193,6 +4193,10 @@ fn game_modal(s: &Shell, look: Look) -> El {
         .label(game.name.clone())
         .w_full()
         .max_w(600.0)
+        // h_full gives the sheet a definite height (capped by max_h) so the
+        // flexible scroll below has room to fill; max_h alone leaves it
+        // unbounded and the scroll collapses to zero.
+        .h_full()
         .max_h(560.0)
         .radius(16.0)
         .continuous_corners()
