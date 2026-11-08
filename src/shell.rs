@@ -201,6 +201,10 @@ struct MetaPanel {
     cache: PathBuf,
     matches: Vec<metadata::Match>,
     images: Vec<ImagePreview>,
+    /// Decoded choice thumbnails, scoped to the current browse. Cleared when
+    /// the panel opens or a new browse starts, so browsing artwork cannot
+    /// churn the long-lived covers cache.
+    previews: HashMap<PathBuf, Pixels>,
     kind: ImageKind,
     replace: bool,
     status: String,
@@ -243,6 +247,7 @@ impl MetaPanel {
             cache: PathBuf::new(),
             matches: Vec::new(),
             images: Vec::new(),
+            previews: HashMap::new(),
             kind: ImageKind::Cover,
             replace: false,
             status: String::new(),
@@ -427,12 +432,17 @@ impl Shell {
     }
 
     fn remember_cover(&mut self, path: &Path) {
+        if let Ok(pixels) = decode_cover(path) {
+            self.cache_cover(path.to_path_buf(), pixels);
+        }
+    }
+
+    /// Cache decoded pixels, bounding the long-lived map.
+    fn cache_cover(&mut self, path: PathBuf, pixels: Pixels) {
         if self.covers.len() >= 64 {
             self.covers.clear();
         }
-        if let Ok(pixels) = decode_cover(path) {
-            self.covers.insert(path.to_path_buf(), pixels);
-        }
+        self.covers.insert(path, pixels);
     }
 
     /// Deterministic fixtures for headless scenes and tests.
@@ -922,6 +932,7 @@ impl Shell {
         meta.open = true;
         meta.matches.clear();
         meta.images.clear();
+        meta.previews.clear();
         meta.replace = false;
         if !meta.busy {
             meta.status.clear();
@@ -1170,7 +1181,11 @@ impl Shell {
         };
         match done {
             Ok(()) => {
-                self.remember_cover(&path);
+                if let Some(pixels) = self.meta.previews.remove(&path) {
+                    self.cache_cover(path, pixels);
+                } else {
+                    self.remember_cover(&path);
+                }
                 self.meta.status = "Artwork saved".into();
             }
             Err(error) => self.meta.status = format!("Could not save artwork: {error:#}"),
@@ -1281,9 +1296,15 @@ impl Shell {
         }
         match result {
             Ok(images) => {
+                // Decode thumbnails into the panel-scoped map, replacing any
+                // previous browse. Applied choices graduate to the covers
+                // cache; the rest die with the panel.
+                self.meta.previews.clear();
                 for preview in &images {
-                    if let Ok(path) = &preview.path {
-                        self.remember_cover(path);
+                    if let Ok(path) = &preview.path
+                        && let Ok(pixels) = decode_cover(path)
+                    {
+                        self.meta.previews.insert(path.clone(), pixels);
                     }
                 }
                 self.meta.images = images;
@@ -1618,7 +1639,7 @@ pub fn spec() -> AppSpec<Shell> {
                     }
                 }
                 thumb.set(48, 72, rgba);
-                s.covers.insert(cover.clone(), thumb);
+                s.meta.previews.insert(cover.clone(), thumb);
                 s.meta.images = vec![
                     ImagePreview {
                         label: "Official cover".into(),
@@ -2887,7 +2908,7 @@ fn meta_game_section(s: &Shell, t: tok::Theme, look: Look, game: &Game, mut form
 /// One downloaded artwork choice with a thumbnail.
 fn meta_choice(s: &Shell, t: tok::Theme, look: Look, index: usize, preview: &ImagePreview) -> El {
     let thumb = match &preview.path {
-        Ok(path) => match s.covers.get(path) {
+        Ok(path) => match s.meta.previews.get(path).or_else(|| s.covers.get(path)) {
             Some(pixels) => el()
                 .key("choice-image")
                 .w(72.0)
