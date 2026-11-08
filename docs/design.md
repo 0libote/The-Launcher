@@ -8,7 +8,7 @@ The launcher takes its cues from console collection screens and physical game ca
 | --- | --- | --- |
 | `BG` | `#101420` | Main midnight canvas |
 | `RAIL` | `#151a28` | Navigation and inputs |
-| `SURFACE` | `#1d2333` | Welcome panel, selected-game dock, dialogs |
+| `SURFACE` | `#1d2333` | Welcome panel, game details modal, dialogs |
 | `TEXT` | `#f3f0e8` | Warm ivory text |
 | `CORAL` | `#ff977c` | Add and Play actions |
 | `MINT` | `#9fdecc` | Active collection, keyboard focus, selection |
@@ -18,10 +18,10 @@ Rune renders the interface with its embedded Inter face. The launcher uses the n
 
 ## Composition
 
-This describes the bundled starting layout. Navigation and details can move or be hidden, Tools can move, and the user can choose grid/list/shelf presentation and override colors in the visual editor. The renderer reads the saved workspace.
+This describes the bundled starting layout. Navigation and details can be hidden, Tools can move, and the user can choose grid/list/shelf presentation and override colors in the visual editor. The renderer reads the saved workspace.
 
 
-A 208-point navigation rail holds the brand, source/favorite filters with real counts, and library-folder access. The main header owns Add and Steam import. The collection toolbar contains the current collection and search. A selected-game dock anchors the Play action below the responsive cover grid.
+A 208-point navigation rail holds the brand, source/favorite filters with real counts, and library-folder access. The main header owns Add and Steam import. The collection toolbar contains the current collection and search. Selecting a game opens a modal with the Play action, details, and management options.
 
 The empty collection shows an original, vector-drawn trio of cartridge cases and a direct invitation to add or import games. It creates no fictional entries. Shorter windows omit supporting tips, and the welcome panel and add dialog scroll when necessary. Filtered-empty views offer a way to clear the search and return to all games.
 

@@ -1,5 +1,5 @@
-//! The Launcher's Rune frontend: sidebar, game views, details, search,
-//! add/edit/remove dialogs, Steam import, metadata & artwork, cover art,
+//! The Launcher's Rune frontend: sidebar, game views, game details modal,
+//! search, add/edit/remove dialogs, Steam import, metadata & artwork, cover art,
 //! and the workspace editor.
 //!
 //! This is the whole UI layer. Data and behavior stay in the library crates:
@@ -173,6 +173,7 @@ pub struct Shell {
     query: TextEdit,
     filter: Filter,
     selected: Option<usize>,
+    details_open: bool,
     notice: Option<String>,
     children: Vec<Child>,
     draft: Option<Draft>,
@@ -361,6 +362,7 @@ impl Shell {
             query: TextEdit::new(""),
             filter: Filter::All,
             selected: None,
+            details_open: false,
             notice: None,
             children: Vec::new(),
             draft: None,
@@ -513,13 +515,25 @@ impl Shell {
         visible_indices(&self.library, self.filter, &self.query.text)
     }
 
-    /// The game the details pane and Play act on: the selection when still
+    /// The game the details view and Play act on: the selection when still
     /// visible, else the first visible row.
     fn current(&self) -> Option<usize> {
         let visible = self.visible();
         self.selected
             .filter(|i| visible.contains(i))
             .or(visible.into_iter().next())
+    }
+
+    /// Select a game. When details live in a modal, selecting opens it.
+    fn select_game(&mut self, index: usize) {
+        self.selected = Some(index);
+        if self.workspace.current().layout.details == Details::Modal {
+            self.details_open = true;
+        }
+    }
+
+    fn close_details(&mut self) {
+        self.details_open = false;
     }
 
     fn reselect(&mut self) {
@@ -773,6 +787,7 @@ impl Shell {
                 self.selected = None;
                 self.reselect();
                 self.remove = false;
+                self.details_open = false;
                 self.notice = Some(
                     if hiding {
                         "Game hidden"
@@ -1689,9 +1704,11 @@ pub fn spec() -> AppSpec<Shell> {
                 *s = Shell::demo();
                 s.workspace.current_mut().layout.view = View::Shelf;
             }),
-            ("details-bottom", |s: &mut Shell| {
+            ("game-modal", |s: &mut Shell| {
                 *s = Shell::demo();
-                s.workspace.current_mut().layout.details = Details::Bottom;
+                s.workspace.current_mut().layout.details = Details::Modal;
+                s.selected = Some(1);
+                s.details_open = true;
             }),
             ("nav-right", |s: &mut Shell| {
                 *s = Shell::demo();
@@ -1789,6 +1806,9 @@ fn view(s: &Shell, _: &mut Cx<Shell>) -> El {
             .child(body(s, t))
             .child(footer(s, t)),
     );
+    if s.workspace.current().layout.details == Details::Modal && s.details_open {
+        root = root.child(game_modal(s, t));
+    }
     if s.draft.is_some() {
         root = root.child(game_dialog(s, t));
     }
@@ -3144,20 +3164,21 @@ fn workspace_dialog(s: &Shell, t: tok::Theme) -> El {
         "workspace-details",
         match layout.details {
             Details::Right => "right",
-            Details::Bottom => "bottom",
+            Details::Modal => "modal",
             Details::Hidden => "hidden",
         },
         &[
             ("right".into(), "Right".into()),
-            ("bottom".into(), "Bottom".into()),
+            ("modal".into(), "Modal".into()),
             ("hidden".into(), "Hidden".into()),
         ],
         |s: &mut Shell, id| {
             s.workspace.current_mut().layout.details = match id.as_str() {
-                "bottom" => Details::Bottom,
+                "modal" => Details::Modal,
                 "hidden" => Details::Hidden,
                 _ => Details::Right,
             };
+            s.details_open = false;
         },
     ));
     form = form.child(section_title(t, "View"));
@@ -3415,19 +3436,10 @@ fn body(s: &Shell, t: tok::Theme) -> El {
     }
     middle = middle.child(shelf(s, t));
     if layout.details == Details::Right {
-        middle = middle.child(details(s, t, false));
+        middle = middle.child(details(s, t));
     }
     if layout.navigation == Navigation::Right {
         middle = middle.child(sidebar(s, t));
-    }
-    if layout.details == Details::Bottom {
-        return col()
-            .key("body")
-            .w_full()
-            .grow(1.0)
-            .min_h(0.0)
-            .child(middle)
-            .child(details(s, t, true));
     }
     middle.key("body")
 }
@@ -3697,7 +3709,7 @@ fn card(s: &Shell, t: tok::Theme, look: Look, index: usize, tile: f32) -> El {
         )
         .motion(motion::SNAPPY)
         .hover(t.hover)
-        .on_press(move |s: &mut Shell| s.selected = Some(index))
+        .on_press(move |s: &mut Shell| s.select_game(index))
         .child(cover_art(s, t, game, tile, tile * 0.56, radius::LG))
         .child(
             col()
@@ -3782,7 +3794,7 @@ fn list_row(s: &Shell, t: tok::Theme, look: Look, index: usize) -> El {
             if selected { 2.0 } else { 1.0 },
             if selected { look.select } else { t.separator },
         )
-        .on_press(move |s: &mut Shell| s.selected = Some(index))
+        .on_press(move |s: &mut Shell| s.select_game(index))
         .child(cover_art(s, t, game, 48.0, 60.0, 8.0))
         .child(
             col()
@@ -3831,7 +3843,7 @@ fn shelf_tile(s: &Shell, t: tok::Theme, look: Look, index: usize, tile: f32) -> 
         .focusable(true)
         .w(tile)
         .gap(8.0)
-        .on_press(move |s: &mut Shell| s.selected = Some(index))
+        .on_press(move |s: &mut Shell| s.select_game(index))
         .child(
             el().key("tile-frame")
                 .w_full()
@@ -3850,25 +3862,17 @@ fn shelf_tile(s: &Shell, t: tok::Theme, look: Look, index: usize, tile: f32) -> 
         )
 }
 
-fn details(s: &Shell, t: tok::Theme, bottom: bool) -> El {
+fn details(s: &Shell, t: tok::Theme) -> El {
     let look = Look::of(&s.workspace);
     let width = s.workspace.current().layout.details_width;
     let Some(index) = s.current() else {
-        return details_shell(t, bottom, width)
+        return details_shell(t, width)
             .child(text("Nothing selected").font(type_::TITLE).color(t.text));
     };
     let Some(game) = s.library.games.get(index).cloned() else {
-        return details_shell(t, bottom, width);
+        return details_shell(t, width);
     };
-    if bottom {
-        return details_bottom(s, t, look, index, &game);
-    }
-    let favorite = game.favorite;
-    let action = match (&game.target, game.installed) {
-        (the_launcher::library::Target::Steam { .. }, Some(false)) => "Install",
-        _ => "Play",
-    };
-    details_shell(t, bottom, width)
+    details_shell(t, width)
         .child(details_cover(s, t, &game, width))
         .child(
             text(game.name.clone())
@@ -3876,7 +3880,7 @@ fn details(s: &Shell, t: tok::Theme, bottom: bool) -> El {
                 .font(type_::TITLE)
                 .color(t.text),
         )
-        .child(details_badges(t, look, &game, favorite))
+        .child(details_badges(t, look, &game, game.favorite))
         .child(
             text(target_line(&game))
                 .key("target")
@@ -3890,170 +3894,185 @@ fn details(s: &Shell, t: tok::Theme, bottom: bool) -> El {
                 .color(t.text_secondary),
         )
         .child(meta_summary(t, &game))
-        .child(
-            row()
-                .key("actions")
-                .w_full()
-                .h(44.0)
-                .radius(radius::MD)
-                .center()
-                .gap(8.0)
-                .fill(look.accent)
-                .role("button")
-                .label(format!("{action} {}", game.name))
-                .focusable(true)
-                .hover(look.accent.alpha(0.85))
-                .on_press(|s: &mut Shell| s.play_current())
-                .child(
-                    text(format!("▶ {action}"))
-                        .font(type_::LABEL)
-                        .color(look.ink),
-                ),
-        )
-        .child(
-            row()
-                .key("favorite")
-                .w_full()
-                .h(40.0)
-                .radius(radius::MD)
-                .center()
-                .fill(t.control_off)
-                .role("button")
-                .label(if favorite {
-                    "Remove from favorites"
-                } else {
-                    "Add to favorites"
-                })
-                .focusable(true)
-                .hover(t.hover)
-                .on_press(move |s: &mut Shell| s.toggle_favorite(index))
-                .child(
-                    text(if favorite {
-                        "♥ Favorited"
-                    } else {
-                        "♡ Favorite"
-                    })
-                    .font(type_::LABEL)
-                    .color(if favorite { look.accent } else { t.text }),
-                ),
-        )
+        .child(play_button(look, &game))
+        .child(favorite_button(t, look, index, &game))
         .child(details_manage(t, index, &game))
         .child(details_media(t, index, &game))
 }
 
-/// Details container: right column or bottom strip.
-fn details_shell(t: tok::Theme, bottom: bool, width: f32) -> El {
-    if bottom {
-        row().key("details").w_full().h(216.0).px(20.0).gap(16.0)
-    } else {
-        col()
-            .key("details")
-            .w(width)
-            .h_full()
-            .padding(20.0)
-            .gap(12.0)
-    }
-    .fill(t.card)
+/// Details container: right column.
+fn details_shell(t: tok::Theme, width: f32) -> El {
+    col()
+        .key("details")
+        .w(width)
+        .h_full()
+        .padding(20.0)
+        .gap(12.0)
+        .fill(t.card)
 }
 
-/// Bottom-strip variant: cover thumbnail, info, actions.
-fn details_bottom(s: &Shell, t: tok::Theme, look: Look, index: usize, game: &Game) -> El {
-    let favorite = game.favorite;
+/// Game details modal: the replacement for the old bottom strip. Selecting a
+/// game opens it; Escape, outside click, or Close dismisses it without losing
+/// the selection.
+fn game_modal(s: &Shell, t: tok::Theme) -> El {
+    let look = Look::of(&s.workspace);
+    let Some(index) = s.current() else {
+        return el().key("game-modal");
+    };
+    let Some(game) = s.library.games.get(index).cloned() else {
+        return el().key("game-modal");
+    };
+    let body = col()
+        .key("game-modal-body")
+        .w_full()
+        .gap(12.0)
+        .child(details_cover(s, t, &game, 560.0))
+        .child(
+            text(game.name.clone())
+                .key("details-name")
+                .font(type_::TITLE)
+                .color(t.text),
+        )
+        .child(details_badges(t, look, &game, game.favorite))
+        .child(
+            text(target_line(&game))
+                .key("target")
+                .font(type_::LABEL)
+                .color(t.text_secondary),
+        )
+        .child(
+            text(played_line(&game))
+                .key("played")
+                .font(type_::LABEL)
+                .color(t.text_secondary),
+        )
+        .child(meta_summary(t, &game))
+        .child(play_button(look, &game))
+        .child(favorite_button(t, look, index, &game))
+        .child(details_manage(t, index, &game))
+        .child(details_media(t, index, &game));
+    let scroll = col()
+        .key("game-modal-scroll")
+        .w_full()
+        .max_h(560.0)
+        .scroll(ScrollSpec {
+            stick_bottom: false,
+        })
+        .child(body);
+    let sheet = col()
+        .key("game-modal-panel")
+        .role("dialog")
+        .label(game.name.clone())
+        .w(560.0)
+        .radius(radius::LG)
+        .fill(t.card)
+        .border(1.0, t.separator)
+        .padding(24.0)
+        .gap(12.0)
+        .modal(true, |s: &mut Shell| s.close_details())
+        .child(
+            row()
+                .key("game-modal-header")
+                .w_full()
+                .center_y()
+                .gap(12.0)
+                .child(
+                    text("Game details")
+                        .font(type_::LABEL)
+                        .color(t.text_secondary)
+                        .grow(1.0),
+                )
+                .child(
+                    row()
+                        .key("game-modal-close")
+                        .role("button")
+                        .label(format!("Close details for {}", game.name))
+                        .focusable(true)
+                        .h(32.0)
+                        .px(12.0)
+                        .radius(radius::MD)
+                        .center()
+                        .fill(t.control_off)
+                        .hover(t.hover)
+                        .on_press(|s: &mut Shell| s.close_details())
+                        .child(text("✕").font(type_::LABEL).color(t.text)),
+                ),
+        )
+        .child(scroll)
+        .child(dialog_button(
+            "game-modal-done",
+            "Close",
+            false,
+            t,
+            look,
+            |s: &mut Shell| s.close_details(),
+        ));
+    el().key("game-modal")
+        .absolute(0.0, 0.0)
+        .w_full()
+        .h_full()
+        .child(scrim())
+        .child(
+            el().key("game-modal-layer")
+                .absolute(0.0, 0.0)
+                .w_full()
+                .h_full()
+                .center()
+                .child(sheet),
+        )
+}
+
+fn play_button(look: Look, game: &Game) -> El {
     let action = match (&game.target, game.installed) {
         (the_launcher::library::Target::Steam { .. }, Some(false)) => "Install",
         _ => "Play",
     };
-    details_shell(t, true, 0.0)
-        .child(cover_art(s, t, game, 132.0, 176.0, radius::MD))
+    row()
+        .key("actions")
+        .w_full()
+        .h(44.0)
+        .radius(radius::MD)
+        .center()
+        .gap(8.0)
+        .fill(look.accent)
+        .role("button")
+        .label(format!("{action} {}", game.name))
+        .focusable(true)
+        .hover(look.accent.alpha(0.85))
+        .on_press(|s: &mut Shell| s.play_current())
         .child(
-            col()
-                .key("details-info")
-                .grow(1.0)
-                .h_full()
-                .py(20.0)
-                .gap(6.0)
-                .child(
-                    text(game.name.clone())
-                        .key("details-name")
-                        .font(type_::TITLE)
-                        .color(t.text),
-                )
-                .child(details_badges(t, look, game, favorite))
-                .child(
-                    text(target_line(game))
-                        .key("target")
-                        .font(type_::LABEL)
-                        .color(t.text_secondary)
-                        .truncate(),
-                )
-                .child(
-                    text(played_line(game))
-                        .key("played")
-                        .font(type_::LABEL)
-                        .color(t.text_secondary),
-                )
-                .child(meta_summary(t, game)),
+            text(format!("▶ {action}"))
+                .font(type_::LABEL)
+                .color(look.ink),
         )
+}
+
+fn favorite_button(t: tok::Theme, look: Look, index: usize, game: &Game) -> El {
+    let favorite = game.favorite;
+    row()
+        .key("favorite")
+        .w_full()
+        .h(40.0)
+        .radius(radius::MD)
+        .center()
+        .fill(t.control_off)
+        .role("button")
+        .label(if favorite {
+            "Remove from favorites"
+        } else {
+            "Add to favorites"
+        })
+        .focusable(true)
+        .hover(t.hover)
+        .on_press(move |s: &mut Shell| s.toggle_favorite(index))
         .child(
-            col()
-                .key("details-side")
-                .w(220.0)
-                .h_full()
-                .py(20.0)
-                .gap(8.0)
-                .center_y()
-                .child(
-                    row()
-                        .key("actions")
-                        .w_full()
-                        .h(44.0)
-                        .radius(radius::MD)
-                        .center()
-                        .fill(look.accent)
-                        .role("button")
-                        .label(format!("{action} {}", game.name))
-                        .focusable(true)
-                        .hover(look.accent.alpha(0.85))
-                        .on_press(|s: &mut Shell| s.play_current())
-                        .child(
-                            text(format!("▶ {action}"))
-                                .font(type_::LABEL)
-                                .color(look.ink),
-                        ),
-                )
-                .child(
-                    row()
-                        .key("favorite")
-                        .w_full()
-                        .h(36.0)
-                        .radius(radius::MD)
-                        .center()
-                        .fill(t.control_off)
-                        .role("button")
-                        .label(if favorite {
-                            "Remove from favorites"
-                        } else {
-                            "Add to favorites"
-                        })
-                        .focusable(true)
-                        .hover(t.hover)
-                        .on_press(move |s: &mut Shell| s.toggle_favorite(index))
-                        .child(
-                            text(if favorite {
-                                "♥ Favorited"
-                            } else {
-                                "♡ Favorite"
-                            })
-                            .font(type_::LABEL)
-                            .color(if favorite {
-                                look.accent
-                            } else {
-                                t.text
-                            }),
-                        ),
-                )
-                .child(details_manage(t, index, game))
-                .child(details_media(t, index, game)),
+            text(if favorite {
+                "♥ Favorited"
+            } else {
+                "♡ Favorite"
+            })
+            .font(type_::LABEL)
+            .color(if favorite { look.accent } else { t.text }),
         )
 }
 
@@ -4315,6 +4334,8 @@ mod tests {
         click(&mut rt, "game-0");
         assert_eq!(rt.state.selected, Some(0));
         assert_eq!(rt.state.current(), Some(0));
+        assert!(rt.state.details_open, "selection opens the game modal");
+        assert!(rt.find("game-modal").is_some(), "modal is visible");
         rt.frame(1.0 / 60.0);
         let name = rt
             .elements()
@@ -4326,6 +4347,36 @@ mod tests {
             name_text.contains("Hollow Drift"),
             "details follow selection: {name_text}"
         );
+    }
+
+    #[test]
+    fn game_modal_closes_without_losing_selection() {
+        let mut rt = harness();
+        assert!(rt.find("game-modal").is_none(), "no modal on launch");
+        click(&mut rt, "game-0");
+        assert!(rt.find("game-modal").is_some());
+        click(&mut rt, "game-modal-close");
+        assert!(!rt.state.details_open);
+        assert!(rt.find("game-modal").is_none(), "close dismisses the modal");
+        assert_eq!(rt.state.selected, Some(0), "selection survives close");
+    }
+
+    #[test]
+    fn right_details_selects_without_modal() {
+        let mut rt = harness();
+        rt.update(|s, _| {
+            s.workspace.current_mut().layout.details = Details::Right;
+            s.details_open = false;
+        });
+        rt.frame(1.0 / 60.0);
+        click(&mut rt, "game-0");
+        assert_eq!(rt.state.selected, Some(0));
+        assert!(
+            !rt.state.details_open,
+            "right pane follows selection without a modal"
+        );
+        assert!(rt.find("game-modal").is_none());
+        assert!(rt.find("details").is_some(), "right pane stays visible");
     }
 
     #[test]

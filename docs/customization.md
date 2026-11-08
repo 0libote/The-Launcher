@@ -7,7 +7,7 @@ The launcher is a library/launch engine with a user-arranged presentation. The b
 Select **Customize** in the launcher’s title bar. It remains available even when navigation and details are hidden. In full screen, use the shortcuts bar; if that is hidden too, Customize appears in the collection toolbar. F11 always exits full screen.
 
 - Drag **Navigation**, **Game details**, or **Tools** onto a supported edge in the preview. The controls below it provide the same placements without dragging.
-- Navigation can sit on the left, right, or be hidden. Details can sit below the collection, on the right, or be hidden. Tools can sit above or below it.
+- Navigation can sit on the left, right, or be hidden. Details can appear on the right, in a modal dialog, or be hidden. Tools can sit above or below it.
 - Choose **Grid**, **List**, or **Shelf**. Grid wraps portrait covers; List shows compact rows; Shelf is a horizontally scrolling row of cases. These are working views of the same library, not separate collections.
 - Adjust cover width and panel widths. Narrow windows cap side-panel widths to preserve space for the collection.
 - Edit the canvas, navigation, panel, control, text, border, action, and selection colors. Changes preview immediately across the shell, title bar, controls, and dialogs. Artwork retains its own colors.

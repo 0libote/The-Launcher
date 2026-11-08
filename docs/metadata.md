@@ -25,7 +25,7 @@ Artwork defaults to **Steam official**. Choose **SteamGridDB first, Steam fallba
 
 SteamGridDB's key is separate from a Steam Web API account key. Obtain one from [SteamGridDB preferences](https://www.steamgriddb.com/profile/preferences/api). It is sent only as a Bearer header to the fixed SteamGridDB API origin, never to artwork CDNs. It is never serialized, printed in errors, or stored in the library/workspace. **Forget** clears the UI's session copy; an already dispatched worker owns its copy until that job ends. No bundled developer key is used.
 
-Information is currently English, with US storefront search. Release dates preserve the provider's display text, including "Coming soon". HTML is reduced to native text; the launcher does not execute or display remote HTML. Provider names are stored per field; SteamGridDB image selections also retain the returned artist name. Sources can be inspected under **Saved information → Sources**. Right-hand game details display downloaded information, backgrounds, and logos; the compact bottom panel keeps its launch controls, with the full information available through Options.
+Information is currently English, with US storefront search. Release dates preserve the provider's display text, including "Coming soon". HTML is reduced to native text; the launcher does not execute or display remote HTML. Provider names are stored per field; SteamGridDB image selections also retain the returned artist name. Sources can be inspected under **Saved information → Sources**. The game details modal and right-hand pane display downloaded information, backgrounds, and logos, with launch controls and the full information available through Options.
 
 ## Local storage and network limits
 

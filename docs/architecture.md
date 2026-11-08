@@ -11,7 +11,7 @@ This keeps a single language for the application and leaves room for a more deli
 | File | Responsibility |
 | --- | --- |
 | `src/main.rs` | Local data path, instance lock, fail-safe startup, window creation |
-| `src/shell.rs` | Rune shell: toolbar, sidebar, grid/list/shelf views, details, search, add/edit/remove dialogs, Steam import, metadata & artwork, cover art, workspace editor; headless scenes and shell tests |
+| `src/shell.rs` | Rune shell: toolbar, sidebar, grid/list/shelf views, game details modal/right pane, search, add/edit/remove dialogs, Steam import, metadata & artwork, cover art, workspace editor; headless scenes and shell tests |
 | `src/library.rs` | Versioned data model, duplicate checks, transactional edits and atomic persistence |
 | `src/launch.rs` | Validate launch targets, construct launch plans, start processes or Steam URIs |
 | `src/steam.rs` | Client discovery, local installed manifests, optional owned-game API merge |
@@ -45,7 +45,7 @@ The launcher uses the native window frame. File pickers are native OS dialogs th
 
 ## Visual direction
 
-The midnight-blue shell, coral primary actions, mint selection, gradient card art with initials, local cover images, and grid/list/shelf views are described in [the visual system](design.md). The shell lives in `src/shell.rs`: one Rune view with a toolbar, sidebar, game views, and details pane, plus `--scene` fixtures that render headlessly to PNG and element-tree JSON. No game data or launch execution lives in the view helpers.
+The midnight-blue shell, coral primary actions, mint selection, gradient card art with initials, local cover images, and grid/list/shelf views are described in [the visual system](design.md). The shell lives in `src/shell.rs`: one Rune view with a toolbar, sidebar, game views, and a game details modal/right pane, plus `--scene` fixtures that render headlessly to PNG and element-tree JSON. No game data or launch execution lives in the view helpers.
 
 An optional, defaulted `Game.cover` path extends schema 1 compatibly. Covers remain local references with a generated fallback. Built-in metadata providers can now populate them through the local artwork cache. PNG/JPEG are the only enabled image formats. Retained GPU textures and decode dimensions are bounded; decoding is currently synchronous on first display.
 

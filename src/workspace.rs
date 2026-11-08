@@ -23,7 +23,8 @@ pub enum Navigation {
 #[serde(rename_all = "snake_case")]
 pub enum Details {
     #[default]
-    Bottom,
+    #[serde(alias = "bottom")]
+    Modal,
     Right,
     Hidden,
 }
@@ -51,7 +52,7 @@ impl Default for Layout {
     fn default() -> Self {
         Self {
             navigation: Navigation::Left,
-            details: Details::Bottom,
+            details: Details::Modal,
             tools: Tools::Top,
             view: View::Grid,
             tile_width: 180.0,
@@ -237,5 +238,16 @@ mod tests {
         w = Workspace::default();
         w.active = 9;
         assert!(w.validate().is_err());
+    }
+    #[test]
+    fn legacy_bottom_details_load_as_modal() {
+        assert_eq!(
+            serde_json::from_str::<Details>("\"bottom\"").unwrap(),
+            Details::Modal
+        );
+        assert_eq!(
+            serde_json::from_str::<Details>("\"modal\"").unwrap(),
+            Details::Modal
+        );
     }
 }
