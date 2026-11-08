@@ -1015,15 +1015,24 @@ mod tests {
 
     #[test]
     fn legacy_libraryfolders_with_escaped_windows_paths() {
-        // Escaped backslashes must unescape to real Windows paths. They do
-        // not exist on this host, so they warn but must not break the
-        // primary library scan.
+        // Escaped backslashes must unescape to real Windows paths. The extra
+        // libraries point at paths under the temp dir that are never created,
+        // so they warn but must not break the primary library scan. (A fixed
+        // drive-letter path cannot be used here: it may really exist on the
+        // host, e.g. a second Steam library, and leak real games into the test.)
         let root_tmp = tempfile::tempdir().unwrap();
         let primary = primary_fixture(root_tmp.path());
         write_manifest(&primary, 9, "Local", 4, "Local", true);
+        let esc = |p: &std::path::Path| p.display().to_string().replace('\\', "\\\\");
+        let missing_a = root_tmp.path().join("missing-a");
+        let missing_b = root_tmp.path().join("nested").join("missing-b");
         fs::write(
             primary.join("libraryfolders.vdf"),
-            "\"LibraryFolders\"\n{\n\t\"1\"\t\t\"D:\\\\SteamLibrary\"\n\t\"2\"\t\t\"E:\\\\Games\\\\Lib\"\n}\n",
+            format!(
+                "\"LibraryFolders\"\n{{\n\t\"1\"\t\t\"{}\"\n\t\"2\"\t\t\"{}\"\n}}\n",
+                esc(&missing_a),
+                esc(&missing_b),
+            ),
         )
         .unwrap();
 

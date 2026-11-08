@@ -459,25 +459,6 @@ impl Launcher {
                         self.scroll_selection = true;
                     }
                 }
-                ui.with_layout(Layout::bottom_up(Align::LEFT), |ui| {
-                    ui.label(
-                        RichText::new("The Launcher  /  0.1")
-                            .size(10.0)
-                            .color(colors.faint),
-                    );
-                    ui.add_space(12.0);
-                    if ui.button("Library folder").clicked() {
-                        let result = open::that_detached(self.path.parent().unwrap())
-                            .map_err(anyhow::Error::from);
-                        self.result(result, "Opened library folder");
-                    }
-                    ui.add_space(16.0);
-                    ui.label(
-                        RichText::new("Layouts are yours to arrange.")
-                            .size(11.0)
-                            .color(colors.muted),
-                    );
-                });
             });
     }
     fn shelf(&mut self, ui: &mut egui::Ui, visible: &[usize]) {
