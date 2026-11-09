@@ -17,7 +17,7 @@ Steam now follows the registry/manifests plus optional Web API account-import ap
 - Validate on Windows hardware and add Windows CI, including an actual release build.
 - Implemented: custom local cover art, title-based fallback art, bounded texture cache, bundled typography, and the redesigned native library. Validate these on Windows hardware.
 - Implemented: up/down grid navigation and scroll-to-selection. Continue Windows keyboard/accessibility and DPI validation.
-- Controller navigation and an intentional big-screen mode with controller disconnect recovery.
+- Implemented: controller navigation (d-pad/stick with auto-repeat, South/Start confirm, East back, disconnect recovery; evdev on Linux, XInput on Windows). An intentional big-screen mode remains future work; validate controllers on Windows hardware.
 - Remember window state, shelf selection, sorting, and user-selected Steam roots.
 - Import previews and per-file warnings; refresh/uninstalled handling that never silently removes custom entries.
 - Timestamp display, recent sorting, and backup/restore UI.

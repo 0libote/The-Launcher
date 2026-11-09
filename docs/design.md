@@ -37,7 +37,7 @@ Images are limited to 16 MiB and 4096 pixels per dimension, decoded with a 64 Mi
 
 ## Interaction and validation
 
-Mouse, search-by-typing, add/edit/remove dialogs, Steam import, metadata & artwork, cover art, and the workspace editor are available; arrow-key navigation, Enter to play, and fullscreen are future work. Escape closes dialogs.
+Mouse, search-by-typing, arrow-key navigation (Enter opens the details modal, then launches; Escape backs out), controller navigation (d-pad/stick, confirm, back with auto-repeat and disconnect recovery), add/edit/remove dialogs, Steam import, metadata & artwork, cover art, and the workspace editor are available; fullscreen is future work. Escape closes dialogs.
 
 Headless Rune checks cover the shell: `--scene` fixtures render to PNG and element-tree JSON, and unit tests drive selection, favorites, filters, and launch errors through scripted pointer input. Native captures and manual interaction checks complement these tests. Verify Windows behavior, high DPI, and accessibility on Windows hardware before release.
 

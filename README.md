@@ -16,9 +16,9 @@ The card art is original gradient art with initials.
 - Arrange navigation/details panels, pick views and tile sizes, and restyle with named layouts and color presets, all saved to a workspace file.
 - Launch games through Play, with errors surfaced in the status bar. On Windows, Steam entries play/install through the Steam client, Epic through the Epic launcher protocol, and Xbox through `explorer.exe shell:AppsFolder`.
 - Persist a local JSON library with atomic replacement and a single-instance lock.
-- Browse with the mouse and search by typing. Keyboard navigation and controller input are future work.
+- Browse with the mouse and search by typing. Arrow keys move selection (a full row up/down in the grid), Enter opens the details modal then launches, and Escape backs out of dialogs. Controllers work too: d-pad/left stick to move, South/A or Start to confirm, East/B to go back (evdev on Linux, XInput on Windows).
 
-No demo games are added to the real library. The gradient card art is original, not downloaded box art. Artwork downloads come from Steam or SteamGridDB only when you fetch them. Controller input and television-distance tuning are future work.
+No demo games are added to the real library. The gradient card art is original, not downloaded box art. Artwork downloads come from Steam or SteamGridDB only when you fetch them. Controller input is driven by OS backends (no extra setup) but still needs validation on real Windows hardware; television-distance tuning is future work.
 
 ## Develop on Windows
 

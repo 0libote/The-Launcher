@@ -22,9 +22,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
 use rune::tok::{motion, radius, type_};
+
+use crate::gamepad::{self, PadAction};
 use rune::{
-    AppSpec, Color, Cx, El, FileDialogOptions, Pixels, ScrollSpec, SurfaceFit, TextEdit, Tx, col,
-    el, row, spacer, text, text_input,
+    AppSpec, Color, Cx, El, FileDialogOptions, Key, KeyEvent, Mods, Pixels, ScrollSpec, SurfaceFit,
+    TextEdit, Tx, col, el, row, spacer, text, text_input,
 };
 use the_launcher::{
     epic, launch,
@@ -276,6 +278,12 @@ pub struct Shell {
     /// UI-ready bytes; [`poll`] inserts them without blocking the frame.
     cover_rx: Option<mpsc::Receiver<(PathBuf, metadata::UiThumbnail)>>,
     meta: MetaPanel,
+    /// Controller actions from the gamepad backend thread. Drained in [`poll`]
+    /// like the other worker channels; `None` until `setup` spawns it.
+    pad_rx: Option<mpsc::Receiver<PadAction>>,
+    /// Grid columns from the shelf flow's laid-out width. Updated by an
+    /// `on_layout` read, so arrow/gamepad up/down moves a full row.
+    grid_cols: usize,
 }
 
 /// Metadata & artwork overlay: settings, title matching, downloads, and
@@ -543,6 +551,8 @@ impl Shell {
             covers: HashMap::new(),
             cover_rx: None,
             meta: MetaPanel::closed(),
+            pad_rx: None,
+            grid_cols: 0,
         }
     }
 
@@ -741,6 +751,78 @@ impl Shell {
 
     fn close_details(&mut self) {
         self.details_open = false;
+    }
+
+    /// Move the selection without opening the details modal, for arrow keys
+    /// and the controller d-pad/stick. Moves clamp at the shelf edges so a
+    /// held direction parks instead of wrapping around the library.
+    fn step_selection(&mut self, dx: i32, dy: i32, tx: &mut Tx) {
+        let visible = self.visible();
+        if visible.is_empty() {
+            return;
+        }
+        let pos = self
+            .current()
+            .and_then(|current| visible.iter().position(|&i| i == current))
+            .unwrap_or(0) as i32;
+        let (dx, dy) = match self.workspace.current().layout.view {
+            View::Grid => (dx, dy),
+            View::List => (0, dy),
+            View::Shelf => (dx, 0),
+        };
+        let stride = match self.workspace.current().layout.view {
+            View::Grid => self.grid_cols.max(1) as i32,
+            _ => 1,
+        };
+        let len = visible.len() as i32;
+        let next = (pos + dx + dy * stride).clamp(0, len - 1) as usize;
+        let index = visible[next];
+        self.selected = Some(index);
+        tx.scroll_into_view(format!("game-{index}"));
+    }
+
+    /// Confirm the selection: open the details modal, or launch when it is
+    /// already open (or when details live in the side pane).
+    fn confirm_selection(&mut self) {
+        if self.draft.is_some()
+            || self.remove
+            || self.meta.open
+            || self.steam.open
+            || self.epic.open
+            || self.xbox.open
+            || self.workspace_open
+        {
+            return;
+        }
+        if self.workspace.current().layout.details == Details::Modal && !self.details_open {
+            if let Some(index) = self.current() {
+                self.select_game(index);
+            }
+            return;
+        }
+        self.play_current();
+    }
+
+    /// Back out of the topmost layer: dialogs first, then the details modal.
+    /// Later children in [`view`] paint on top, so they dismiss first.
+    fn go_back(&mut self) {
+        if self.workspace_open {
+            self.cancel_workspace();
+        } else if self.meta.open {
+            self.meta.open = false;
+        } else if self.xbox.open {
+            self.xbox.open = false;
+        } else if self.epic.open {
+            self.epic.open = false;
+        } else if self.steam.open {
+            self.steam.open = false;
+        } else if self.remove {
+            self.remove = false;
+        } else if self.draft.is_some() {
+            self.draft = None;
+        } else if self.details_open {
+            self.close_details();
+        }
     }
 
     fn reselect(&mut self) {
@@ -2022,6 +2104,8 @@ fn gradient(name: &str) -> (Color, Color) {
 pub fn spec() -> AppSpec<Shell> {
     AppSpec::<Shell> {
         poll: Some(poll),
+        on_key: Some(nav_key),
+        setup: Some(pad_setup),
         scenes: &[
             ("empty", |s: &mut Shell| *s = Shell::state()),
             ("library", |s: &mut Shell| *s = Shell::demo()),
@@ -2317,7 +2401,62 @@ fn poll(s: &mut Shell, _now: f64, tx: &mut Tx) -> bool {
             tx.wake_after(Duration::from_millis(200));
         }
     }
+    // Controller actions from the gamepad backend thread. The thread only
+    // wakes the loop when it has input, so an idle controller costs nothing.
+    while let Some(action) = s.pad_rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
+        match action {
+            PadAction::Move { dx, dy } => s.step_selection(dx, dy, tx),
+            PadAction::Confirm => s.confirm_selection(),
+            PadAction::Back => s.go_back(),
+        }
+        changed = true;
+    }
     changed
+}
+
+/// Keyboard navigation for the shelf and dialogs. Rune routes keys the
+/// focused control does not claim here, so typing in search and fields is
+/// unaffected; arrows in the search box move the selection underneath.
+/// Controllers drive the same [`Shell`] actions through [`PadAction`].
+fn nav_key(s: &mut Shell, ev: &KeyEvent, tx: &mut Tx) -> bool {
+    if ev.mods != Mods::default() {
+        return false;
+    }
+    match ev.key {
+        Key::Left => {
+            s.step_selection(-1, 0, tx);
+            true
+        }
+        Key::Right => {
+            s.step_selection(1, 0, tx);
+            true
+        }
+        Key::Up => {
+            s.step_selection(0, -1, tx);
+            true
+        }
+        Key::Down => {
+            s.step_selection(0, 1, tx);
+            true
+        }
+        Key::Enter => {
+            s.confirm_selection();
+            true
+        }
+        Key::Escape => {
+            s.go_back();
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Spawn the controller backend once, handing it a waker so gamepad input
+/// wakes the loop. Best effort: without a backend the channel stays empty.
+fn pad_setup(s: &mut Shell, wake: rune::runtime::Waker) {
+    let (tx, rx) = mpsc::channel();
+    s.pad_rx = Some(rx);
+    gamepad::spawn(tx, wake);
 }
 
 fn view(s: &Shell, cx: &mut Cx<Shell>) -> El {
@@ -4389,7 +4528,7 @@ fn sidebar(s: &Shell, look: Look) -> El {
         );
     }
     list.child(spacer().grow(1.0)).child(
-        text("Gamepad support is next.")
+        text("Arrows / d-pad move • Enter / A plays • Esc / B backs out.")
             .key("sidebar-next")
             .font(type_::LABEL)
             .color(look.faint)
@@ -4451,7 +4590,23 @@ fn shelf(s: &Shell, look: Look) -> El {
             View::Grid => {
                 // One wrapping row: Taffy flows as many tiles per line as the
                 // shelf fits, so wide windows fill instead of leaving a void.
-                let mut flow = row().key("flow").w_full().flex_wrap().gap(16.0);
+                // The laid-out width reports the column count for arrow and
+                // controller up/down; unchanged widths stay live-only so
+                // scrolling never re-runs the view.
+                let mut flow = row()
+                    .key("flow")
+                    .w_full()
+                    .flex_wrap()
+                    .gap(16.0)
+                    .on_layout_tx(move |s: &mut Shell, rect, tx| {
+                        let cols = ((rect[2] + 16.0) / (tile + 16.0)) as usize;
+                        let cols = cols.max(1);
+                        if s.grid_cols == cols {
+                            tx.live_only();
+                        } else {
+                            s.grid_cols = cols;
+                        }
+                    });
                 for &i in &visible {
                     flow = flow.child(card(s, look, i, tile));
                 }
@@ -5313,6 +5468,22 @@ mod tests {
         rt.frame(1.0 / 60.0);
     }
 
+    fn nav_harness() -> Runtime<Shell> {
+        let mut rt = harness();
+        rt.on_key = Some(nav_key);
+        rt.poll = Some(poll);
+        rt.frame(1.0 / 60.0);
+        rt
+    }
+
+    fn press(rt: &mut Runtime<Shell>, key: Key) {
+        rt.key(KeyEvent {
+            key,
+            mods: Mods::default(),
+        });
+        rt.frame(1.0 / 60.0);
+    }
+
     #[test]
     fn filtering_combines_collection_and_search() {
         let library = Shell::demo().library.clone();
@@ -5414,6 +5585,80 @@ mod tests {
             "modal fills the window height: {:?}",
             panel.rect
         );
+    }
+
+    #[test]
+    fn arrows_move_selection_and_browse_inside_the_modal() {
+        let mut rt = nav_harness();
+        click(&mut rt, "game-0");
+        assert_eq!(rt.state.selected, Some(0));
+        let cols = rt.state.grid_cols;
+        assert!(cols > 1, "grid reports multiple columns: {cols}");
+        press(&mut rt, Key::Right);
+        assert_eq!(rt.state.selected, Some(1));
+        assert!(rt.state.details_open, "arrows browse inside the modal");
+        press(&mut rt, Key::Down);
+        assert_eq!(rt.state.selected, Some(1 + cols));
+        press(&mut rt, Key::Up);
+        assert_eq!(rt.state.selected, Some(1));
+        press(&mut rt, Key::Left);
+        assert_eq!(rt.state.selected, Some(0));
+        press(&mut rt, Key::Left);
+        assert_eq!(rt.state.selected, Some(0), "selection clamps at the edge");
+    }
+
+    #[test]
+    fn enter_opens_the_modal_then_plays() {
+        let mut rt = nav_harness();
+        rt.update(|s, _| s.selected = Some(0));
+        rt.frame(1.0 / 60.0);
+        assert!(!rt.state.details_open);
+        press(&mut rt, Key::Enter);
+        assert!(rt.state.details_open, "Enter opens the details modal");
+        press(&mut rt, Key::Enter);
+        let notice = rt.state.notice.clone().unwrap_or_default();
+        assert!(
+            notice.starts_with("Could not launch"),
+            "second Enter launches (and reports the bad demo path): {notice}"
+        );
+    }
+
+    #[test]
+    fn escape_backs_out_topmost_first() {
+        let mut rt = nav_harness();
+        press(&mut rt, Key::Enter);
+        assert!(rt.state.details_open);
+        rt.update(|s, _| s.draft = Some(Draft::blank()));
+        rt.frame(1.0 / 60.0);
+        press(&mut rt, Key::Escape);
+        assert!(rt.state.draft.is_none(), "dialog closes first");
+        assert!(rt.state.details_open, "modal stays open underneath");
+        press(&mut rt, Key::Escape);
+        assert!(!rt.state.details_open, "modal closes next");
+        assert_eq!(rt.state.selected, Some(1), "selection survives");
+    }
+
+    #[test]
+    fn controller_actions_drain_through_poll() {
+        let mut rt = nav_harness();
+        rt.update(|s, _| {
+            let (tx, rx) = mpsc::channel();
+            tx.send(PadAction::Move { dx: 1, dy: 0 })
+                .expect("pad channel sends");
+            s.pad_rx = Some(rx);
+        });
+        rt.frame(1.0 / 60.0);
+        assert_eq!(rt.state.selected, Some(2), "pad right moves selection");
+        assert!(!rt.state.details_open, "moving never opens the modal");
+        press(&mut rt, Key::Enter);
+        assert!(rt.state.details_open);
+        rt.update(|s, _| {
+            let (tx, rx) = mpsc::channel();
+            tx.send(PadAction::Back).expect("pad channel sends");
+            s.pad_rx = Some(rx);
+        });
+        rt.frame(1.0 / 60.0);
+        assert!(!rt.state.details_open, "pad back closes the modal");
     }
 
     #[test]

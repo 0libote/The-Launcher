@@ -4,14 +4,15 @@
 
 The user’s constraint is a fully Rust launcher that uses Bun. A webview stack would put UI behavior in JavaScript or require a Rust-to-Wasm build pipeline. Instead, Rune renders a native Rust interface on its own GPU renderer with headless snapshots for agent-checked UI work. Bun runs the development commands and the small cross-platform check script. It is not an application runtime or dependency manager for Rust; Cargo owns Rust dependencies and `Cargo.lock` pins them.
 
-This keeps a single language for the application and leaves room for a more deliberate console UI. Tradeoffs: Rune is pre-release and pinned to a `dev` rev, accessibility depends on Rune/AccessKit and platform support, and gamepad navigation requires explicit work. Hardware and screen-reader checks on Windows remain necessary.
+This keeps a single language for the application and leaves room for a more deliberate console UI. Tradeoffs: Rune is pre-release and pinned to a `dev` rev, accessibility depends on Rune/AccessKit and platform support, and controllers need OS backends (evdev on Linux, XInput on Windows) plus hardware validation. Hardware and screen-reader checks on Windows remain necessary.
 
 ## Boundaries
 
 | File | Responsibility |
 | --- | --- |
 | `src/main.rs` | Local data path, instance lock, fail-safe startup, window creation |
-| `src/shell.rs` | Rune shell: toolbar, sidebar, grid/list/shelf views, game details modal/right pane, search, add/edit/remove dialogs, Steam/Epic/Xbox imports, metadata & artwork, cover art, workspace editor; headless scenes and shell tests |
+| `src/shell.rs` | Rune shell: toolbar, sidebar, grid/list/shelf views, game details modal/right pane, keyboard and controller navigation, search, add/edit/remove dialogs, Steam/Epic/Xbox imports, metadata & artwork, cover art, workspace editor; headless scenes and shell tests |
+| `src/gamepad.rs` | Controller backend (binary crate): evdev on Linux, XInput on Windows; button/stick events become channel actions drained by the shell poll loop |
 | `src/library.rs` | Versioned data model, duplicate checks, transactional edits and atomic persistence |
 | `src/launch.rs` | Validate launch targets, construct launch plans, start processes or Steam/Epic/Xbox protocol handlers |
 | `src/steam.rs` | Client discovery, local installed manifests, optional owned-game API merge |
