@@ -21,6 +21,19 @@ bun run build                # Native release + Windows NSIS installer on Window
 
 Browser tests use `CHROMIUM_PATH` or the system Chromium at `/usr/bin/chromium`; on other hosts set the environment variable to an installed Chromium executable. They launch an isolated test browser and reuse/start Vite. Install a supported Chromium browser before running them. They never use your real library. Mocked IPC tests verify frontend wiring, not native IPC execution.
 
+## UI system
+
+The interface uses Tailwind CSS v4 (`@tailwindcss/vite` in `vite.config.ts`),
+`bits-ui` headless primitives, `lucide-svelte` icons, and
+`class-variance-authority` variants, mirroring the T3 Code stack. `style.css`
+defines `@theme inline` tokens bound to the skin CSS variables, so utilities
+like `bg-surface` or `text-muted` follow light/dark skins and custom themes.
+Shared pieces live in `frontend/components/ui/` (`Button` with
+`primary`/`secondary`/`ghost`/`danger`/`icon` variants) with `cn()` in
+`frontend/lib/utils.ts` for class merging. Dialogs use `bits-ui` Dialog with
+the same modal contract; keep the `Modal` props stable and put new generic
+controls in `ui/` rather than hand-rolled CSS.
+
 ## Screenshots and benchmarks
 
 With the development server on port 1420, `bun run screenshots` writes fixture captures to `docs/screenshots/rewrite/`. Set `CHROMIUM_PATH` when needed.

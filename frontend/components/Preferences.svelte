@@ -1,7 +1,9 @@
 <script lang="ts">
   import { untrack, onDestroy } from 'svelte';
   import Modal from './Modal.svelte';
+  import Button from './ui/button.svelte';
   import type { Workspace, Settings, Skin } from '../lib/model';
+  import { t3LightSkin, t3DarkSkin } from '../lib/model';
   import Icon from './Icon.svelte';
   let {
     workspace,
@@ -96,6 +98,27 @@
       >{/each}
   </div>
   {#if tab === 'Appearance'}
+    <label
+      >Theme
+      <div class="theme-presets">
+        <Button
+          type="button"
+          variant="secondary"
+          onclick={() => (active.skin = t3LightSkin())}
+          ><Icon name="sun" size={15} />Light</Button
+        ><Button
+          type="button"
+          variant="secondary"
+          onclick={() => (active.skin = t3DarkSkin())}
+          ><Icon name="moon" size={15} />Dark</Button
+        >
+      </div>
+    </label>
+    <p class="field-hint">
+      T3 Code style: light follows the system theme on first load, dark is true
+      black. Toggle anytime from the top bar or with Ctrl+Alt+A. Colors below
+      stay editable like a custom T3 theme.
+    </p>
     <div class="form-row">
       <label
         >Saved layout<select bind:value={draft.active}
@@ -103,8 +126,8 @@
               >{preset.name}</option
             >{/each}</select
         ></label
-      ><button class="secondary align-end" onclick={duplicate}
-        ><Icon name="plus" />Duplicate</button
+      ><Button variant="secondary" class="align-end" onclick={duplicate}
+        ><Icon name="plus" />Duplicate</Button
       >
     </div>
     <label>Layout name<input bind:value={active.name} maxlength="64" /></label>
@@ -214,8 +237,8 @@
       SteamGridDB asks for a session key when fetching artwork. Keys are never
       saved to the library.
     </p>
-    <button class="secondary" onclick={fill}
-      ><Icon name="refresh" />Fill missing information for library</button
+    <Button variant="secondary" onclick={fill}
+      ><Icon name="refresh" />Fill missing information for library</Button
     >
     <p class="field-hint">
       Uses your saved download preferences. You can stop the queue from the
@@ -227,32 +250,31 @@
       changes. Backups contain library entries, not game files or artwork files.
     </p>
     <div class="backup-actions">
-      <button
-        class="secondary"
+      <Button
+        variant="secondary"
         disabled={pending}
         onclick={() => action(backup)}
-        ><Icon name="download" />Export library backup</button
-      ><button
-        class="secondary"
+        ><Icon name="download" />Export library backup</Button
+      ><Button
+        variant="secondary"
         disabled={pending}
         onclick={() => action(restore)}
-        ><Icon name="refresh" />Restore a backup</button
-      ><button class="secondary" onclick={folder}
-        ><Icon name="folder" />Open library folder</button
+        ><Icon name="refresh" />Restore a backup</Button
+      ><Button variant="secondary" onclick={folder}
+        ><Icon name="folder" />Open library folder</Button
       >
     </div>
   {/if}
   {#if error}<p class="inline-error" role="alert">{error}</p>{/if}
   <div class="form-actions">
-    <button class="secondary" disabled={pending} onclick={close}>Cancel</button
-    ><button
-      class="primary"
+    <Button variant="secondary" disabled={pending} onclick={close}>Cancel</Button
+    ><Button
       disabled={pending}
       onclick={() =>
         action(async () => {
           await save(draft, prefs);
           if (alive) close();
-        })}>{pending ? 'Saving…' : 'Save preferences'}</button
+        })}>{pending ? 'Saving…' : 'Save preferences'}</Button
     >
   </div>
 </Modal>

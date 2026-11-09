@@ -3,6 +3,7 @@
   import { lastPlayed, source } from '../lib/model';
   import ArtworkImage from './ArtworkImage.svelte';
   import Cover from './Cover.svelte';
+  import Button from './ui/button.svelte';
   import Icon from './Icon.svelte';
   let {
     game,
@@ -38,10 +39,10 @@
       <ArtworkImage {game} kind="background" />
     </div>{/if}
   <div class="detail-top">
-    <span class="source-label">{source(game)}</span><button
-      class="icon-button"
+    <span class="source-label">{source(game)}</span><Button
+      variant="icon"
       onclick={close}
-      aria-label="Close game details"><Icon name="close" /></button
+      aria-label="Close game details"><Icon name="close" /></Button
     >
   </div>
   <div class="detail-cover"><Cover {game} url={cover} /></div>
@@ -50,12 +51,12 @@
     </div>{/if}
   <div class="detail-title">
     <h2>{game.name}</h2>
-    <button
-      class="icon-button"
-      class:is-favorite={game.favorite}
+    <Button
+      variant="icon"
+      class={game.favorite ? 'is-favorite' : ''}
       onclick={favorite}
       aria-label={game.favorite ? 'Remove from favorites' : 'Add to favorites'}
-      aria-pressed={game.favorite}><Icon name="heart" /></button
+      aria-pressed={game.favorite}><Icon name="heart" /></Button
     >
   </div>
   <p class="detail-subtitle">
@@ -64,14 +65,14 @@
       ? ` / ${game.metadata.release_date}`
       : ''}
   </p>
-  <button class="primary play-button" disabled={busy} onclick={play}
+  <Button class="play-button" disabled={busy} onclick={play}
     ><Icon
       name={game.installed === false && game.target.kind === 'steam'
         ? 'download'
         : 'play'}
     />{game.installed === false && game.target.kind === 'steam'
       ? 'Install with Steam'
-      : 'Play game'}</button
+      : 'Play game'}</Button
   >
   <div class="detail-facts">
     <div>
@@ -119,9 +120,10 @@
         <dd>{game.metadata.series}</dd>
       </div>{/if}
   </dl>
-  {#each game.metadata.links as link, index}<button
-      class="text-button store-link"
-      onclick={() => openLink(index)}>Open store page</button
+  {#each game.metadata.links as link, index}<Button
+      variant="ghost"
+      class="store-link"
+      onclick={() => openLink(index)}>Open store page</Button
     >{/each}
   {#if Object.keys(game.metadata.sources).length}<details class="attribution">
       <summary>Metadata sources</summary
@@ -130,19 +132,19 @@
         </p>{/each}
     </details>{/if}
   <div class="detail-actions">
-    <button class="secondary" onclick={edit}
-      ><Icon name="edit" />Edit game</button
-    ><button class="secondary" onclick={artwork}
-      ><Icon name="image" />Artwork</button
-    ><button class="secondary" onclick={metadata}
-      ><Icon name="refresh" />Find metadata</button
-    ><button class="text-button" onclick={hidden}
+    <Button variant="secondary" onclick={edit}
+      ><Icon name="edit" />Edit game</Button
+    ><Button variant="secondary" onclick={artwork}
+      ><Icon name="image" />Artwork</Button
+    ><Button variant="secondary" onclick={metadata}
+      ><Icon name="refresh" />Find metadata</Button
+    ><Button variant="ghost" onclick={hidden}
       ><Icon name="eye" />{game.hidden
         ? 'Restore to library'
-        : 'Hide from library'}</button
-    >{#if game.target.kind === 'executable'}<button
-        class="text-button danger"
-        onclick={remove}>Remove from library</button
+        : 'Hide from library'}</Button
+    >{#if game.target.kind === 'executable'}<Button
+        variant="danger"
+        onclick={remove}>Remove from library</Button
       >{/if}
   </div>
 </section>

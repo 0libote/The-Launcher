@@ -56,8 +56,8 @@ impl Default for Layout {
             tools: Tools::Top,
             view: View::Grid,
             tile_width: 180.0,
-            navigation_width: 208.0,
-            details_width: 260.0,
+            navigation_width: 232.0,
+            details_width: 300.0,
             show_shortcuts: true,
         }
     }
@@ -79,16 +79,16 @@ pub struct Skin {
 impl Default for Skin {
     fn default() -> Self {
         Self {
-            background: [16, 20, 32],
-            navigation: [21, 26, 40],
-            surface: [29, 35, 51],
-            raised: [38, 46, 64],
-            text: [243, 240, 232],
-            muted: [160, 171, 190],
-            faint: [132, 145, 165],
-            line: [49, 59, 80],
-            accent: [255, 151, 124],
-            selection: [159, 222, 204],
+            background: [252, 252, 252],
+            navigation: [250, 250, 250],
+            surface: [255, 255, 255],
+            raised: [244, 244, 245],
+            text: [24, 24, 27],
+            muted: [82, 82, 91],
+            faint: [113, 113, 122],
+            line: [228, 228, 231],
+            accent: [219, 39, 119],
+            selection: [219, 39, 119],
         }
     }
 }

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { untrack, onDestroy } from 'svelte';
+  import Button from './ui/button.svelte';
   import Modal from './Modal.svelte';
   import Icon from './Icon.svelte';
   import { emptyMetadata, type Game } from '../lib/model';
@@ -103,16 +104,16 @@
             bind:value={path}
             placeholder="Choose the game’s executable"
             required
-          /><button
+          /><Button
             type="button"
-            class="secondary"
+            variant="secondary"
             onclick={async () => {
               try {
                 path = (await pick('executable')) ?? path;
               } catch (e) {
                 error = String(e);
               }
-            }}><Icon name="folder" />Browse</button
+            }}><Icon name="folder" />Browse</Button
           >
         </div></label
       >
@@ -132,16 +133,16 @@
             <input
               bind:value={directory}
               placeholder="Use the executable’s folder"
-            /><button
+            /><Button
               type="button"
-              class="secondary"
+              variant="secondary"
               onclick={async () => {
                 try {
                   directory = (await pick('folder')) ?? directory;
                 } catch (e) {
                   error = String(e);
                 }
-              }}>Browse</button
+              }}>Browse</Button
             >
           </div></label
         >
@@ -157,10 +158,13 @@
     </div>
     {#if error}<p class="inline-error" role="alert">{error}</p>{/if}
     <div class="form-actions">
-      <button type="button" class="secondary" disabled={saving} onclick={close}
-        >Cancel</button
-      ><button class="primary" disabled={saving}
-        >{saving ? 'Saving…' : 'Save game'}</button
+      <Button
+        type="button"
+        variant="secondary"
+        disabled={saving}
+        onclick={close}>Cancel</Button
+      ><Button disabled={saving}
+        >{saving ? 'Saving…' : 'Save game'}</Button
       >
     </div>
   </form>

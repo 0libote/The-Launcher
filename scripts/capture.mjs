@@ -65,4 +65,37 @@ await page.screenshot({
   path: 'docs/screenshots/rewrite/library-mobile.png',
   fullPage: false,
 });
+const dark = await browser.newPage({
+  viewport: { width: 1440, height: 1000 },
+  deviceScaleFactor: 1,
+});
+await dark.addInitScript(() => {
+  localStorage.setItem('launcher-appearance', 'dark');
+});
+dark.on('pageerror', (error) => console.error('PAGE ERROR:', error.message));
+await dark.goto('http://localhost:1420/?demo');
+await dark
+  .getByRole('button', { name: 'Astral Voyager', exact: true })
+  .waitFor();
+await dark.evaluate(() => document.fonts.ready);
+await dark.screenshot({
+  path: 'docs/screenshots/rewrite/library-grid-dark.png',
+  fullPage: false,
+});
+await dark.getByRole('button', { name: 'Astral Voyager', exact: true }).click();
+await dark.screenshot({
+  path: 'docs/screenshots/rewrite/game-details-dark.png',
+  fullPage: false,
+});
+await dark.keyboard.press('Escape');
+await dark.getByRole('button', { name: 'List view', exact: true }).click();
+await dark.screenshot({
+  path: 'docs/screenshots/rewrite/library-list-dark.png',
+  fullPage: false,
+});
+await dark.getByRole('button', { name: 'Preferences', exact: true }).click();
+await dark.screenshot({
+  path: 'docs/screenshots/rewrite/preferences-dark.png',
+  fullPage: false,
+});
 await browser.close();

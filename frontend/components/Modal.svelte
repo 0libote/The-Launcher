@@ -1,7 +1,10 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { Dialog } from 'bits-ui';
   import type { Snippet } from 'svelte';
+  import { cn } from '../lib/utils';
+  import Button from './ui/button.svelte';
   import Icon from './Icon.svelte';
+
   let {
     title,
     close,
@@ -15,39 +18,27 @@
     wide?: boolean;
     error?: string;
   } = $props();
-  let dialog: HTMLDialogElement;
-  onMount(() => {
-    dialog.showModal();
-    return () => dialog.close();
-  });
 </script>
 
-<dialog
-  aria-label={title}
-  bind:this={dialog}
-  class:wide
-  oncancel={(event) => {
-    event.preventDefault();
-    close();
-  }}
-  onclick={(event) => {
-    if (event.target === dialog) close();
-  }}
-  onkeydown={(event) => {
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      close();
-    }
+<Dialog.Root
+  open
+  onOpenChange={(open) => {
+    if (!open) close();
   }}
 >
-  <div class="modal-heading">
-    <h2>{title}</h2>
-    <button class="icon-button" aria-label="Close dialog" onclick={close}
-      ><Icon name="close" /></button
-    >
-  </div>
-  <div class="modal-content">
-    {@render children()}
-    {#if error}<p class="inline-error" role="alert">{error}</p>{/if}
-  </div>
-</dialog>
+  <Dialog.Portal>
+    <Dialog.Overlay class="dialog-overlay" />
+    <Dialog.Content class={cn('dialog-panel', wide && 'wide')}>
+      <div class="modal-heading">
+        <Dialog.Title class="modal-title">{title}</Dialog.Title>
+        <Button variant="icon" onclick={close} aria-label="Close dialog"
+          ><Icon name="close" /></Button
+        >
+      </div>
+      <div class="modal-content">
+        {@render children()}
+        {#if error}<p class="inline-error" role="alert">{error}</p>{/if}
+      </div>
+    </Dialog.Content>
+  </Dialog.Portal>
+</Dialog.Root>

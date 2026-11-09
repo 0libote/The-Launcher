@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import Icon from './components/Icon.svelte';
+  import Button from './components/ui/button.svelte';
   import Cover from './components/Cover.svelte';
   import Modal from './components/Modal.svelte';
   import GameEditor from './components/GameEditor.svelte';
@@ -21,6 +22,8 @@
     identity,
     source,
     lastPlayed,
+    t3LightSkin,
+    t3DarkSkin,
     type Collection,
     type Game,
     type Library,
@@ -29,10 +32,23 @@
     type Workspace,
     type Settings,
   } from './lib/model';
+  type Appearance = 'system' | 'light' | 'dark';
   let library = $state<Library>({ schema_version: 1, games: [] });
   let workspace = $state(defaultWorkspace());
   let previewWorkspace = $state<Workspace | null>(null);
   let settings = $state(defaultSettings());
+  let appearance = $state<Appearance>(
+    typeof localStorage !== 'undefined'
+      ? (localStorage.getItem('launcher-appearance') as Appearance) || 'system'
+      : 'system',
+  );
+  const systemDark = () =>
+    typeof window !== 'undefined' &&
+    window.matchMedia?.('(prefers-color-scheme: dark)').matches;
+  let osDark = $state(systemDark());
+  const effectiveAppearance = $derived<Exclude<Appearance, 'system'>>(
+    appearance === 'system' ? (osDark ? 'dark' : 'light') : appearance,
+  );
   let collection = $state<Collection>('All games');
   let query = $state('');
   let sort = $state<Sort>('name');
@@ -97,7 +113,26 @@
         `--${key}`,
         `rgb(${value.join(',')})`,
       );
+    document.documentElement.dataset.theme = effectiveAppearance;
   });
+  function applySkin(dark: boolean) {
+    active.skin = dark ? t3DarkSkin() : t3LightSkin();
+  }
+  function setAppearance(next: Appearance) {
+    appearance = next;
+    try {
+      localStorage.setItem('launcher-appearance', next);
+    } catch {
+      /* Private browsing can block storage; the theme still applies. */
+    }
+    const dark = next === 'dark' || (next === 'system' && systemDark());
+    applySkin(dark);
+  }
+  function cycleAppearance() {
+    setAppearance(
+      appearance === 'light' ? 'dark' : appearance === 'dark' ? 'system' : 'light',
+    );
+  }
   const view = $derived(active.layout.view);
   const visible = $derived(
     filterGames(library.games, collection, query, sort, installedOnly),
@@ -453,7 +488,29 @@
       searchInput?.focus();
       return;
     }
+    if (
+      event.key.toLowerCase() === 'a' &&
+      event.altKey &&
+      (event.ctrlKey || event.metaKey)
+    ) {
+      event.preventDefault();
+      cycleAppearance();
+      return;
+    }
     const target = event.target as HTMLElement;
+    const tag = target?.tagName;
+    if (
+      event.key === '/' &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      tag !== 'INPUT' &&
+      tag !== 'TEXTAREA' &&
+      tag !== 'SELECT'
+    ) {
+      event.preventDefault();
+      searchInput?.focus();
+      return;
+    }
     if (
       modal ||
       (target &&
@@ -461,11 +518,6 @@
         !target.closest('.game-card'))
     )
       return;
-    if (event.key === '/' && !event.ctrlKey && !event.metaKey) {
-      event.preventDefault();
-      searchInput?.focus();
-      return;
-    }
     if (!visible.length || detailsOpen) return;
     if (
       ['ArrowRight', 'ArrowLeft', 'ArrowDown', 'ArrowUp'].includes(event.key)
@@ -512,12 +564,31 @@
         if (demo) adopt(demoSnapshot());
         else if (desktop) await reload();
         else adopt({ library, workspace, settings, data_path: '' });
+        const freshSkin = JSON.stringify(active.skin);
+        if (
+          freshSkin === JSON.stringify(t3LightSkin()) ||
+          freshSkin === JSON.stringify(t3DarkSkin())
+        )
+          applySkin(effectiveAppearance === 'dark');
       } catch (e) {
         fatal = String(e);
       } finally {
         loading = false;
       }
     })();
+    const media = window.matchMedia?.('(prefers-color-scheme: dark)');
+    const onSystemTheme = () => {
+      osDark = systemDark();
+      if (appearance !== 'system') return;
+      const freshSkin = JSON.stringify(active.skin);
+      if (
+        freshSkin !== JSON.stringify(t3LightSkin()) &&
+        freshSkin !== JSON.stringify(t3DarkSkin())
+      )
+        return;
+      applySkin(systemDark());
+    };
+    media?.addEventListener?.('change', onSystemTheme);
     // Poll only while a controller is attached; keyboard/mouse work without this timer.
     let frame = 0;
     let lastAction = 0;
@@ -569,6 +640,7 @@
     return () => {
       cancelAnimationFrame(frame);
       window.removeEventListener('gamepadconnected', connect);
+      media?.removeEventListener?.('change', onSystemTheme);
     };
   });
 </script>
@@ -643,23 +715,35 @@
   </aside>
   <div class="main-shell">
     <header class="topbar">
-      <button
-        class="icon-button nav-toggle"
+      <Button
+        variant="icon"
+        class="nav-toggle"
         onclick={() => (mobileNav = !mobileNav)}
-        aria-label="Toggle navigation"><Icon name="library" /></button
+        aria-label="Toggle navigation"><Icon name="library" /></Button
       >
       <div class="breadcrumb">
         Your collection <span>/</span> <strong>{collection}</strong>
       </div>
       <div class="topbar-actions">
-        <button
-          class="secondary import-button"
+        <Button
+          variant="icon"
+          onclick={cycleAppearance}
+          aria-label={`Appearance: ${appearance}. Activate to switch theme`}
+          aria-pressed={effectiveAppearance === 'dark'}
+          title={`Appearance: ${appearance} (Ctrl+Alt+A)`}
+          ><Icon
+            name={effectiveAppearance === 'dark' ? 'sun' : 'moon'}
+            size={17}
+          /></Button
+        ><Button
+          variant="secondary"
+          class="import-button"
           onclick={() => {
             modal = 'import';
             warnings = [];
-          }}><Icon name="download" />Import games</button
-        ><button class="primary" onclick={() => (modal = 'add')}
-          ><Icon name="plus" />Add game</button
+          }}><Icon name="download" />Import games</Button
+        ><Button onclick={() => (modal = 'add')}
+          ><Icon name="plus" />Add game</Button
         >
       </div>
     </header>
@@ -713,11 +797,11 @@
               bind:value={query}
               placeholder="Find a game, genre, or tag"
               aria-label="Search games"
-            />{#if query}<button
-                class="icon-button"
+            />{#if query}<Button
+                variant="icon"
                 aria-label="Clear search"
                 onclick={() => (query = '')}
-                ><Icon name="close" size={15} /></button
+                ><Icon name="close" size={15} /></Button
               >{:else}<kbd>/</kbd>{/if}
           </div>
           <div class="view-controls">
@@ -769,17 +853,19 @@
                 : 'Bring your PC games together, then make the shelf your own.'}
             </p>
             <div class="empty-actions">
-              {#if library.games.length}<button
-                  class="secondary"
+              {#if library.games.length}<Button
+                  variant="secondary"
                   onclick={() => {
                     query = '';
                     installedOnly = false;
                     chooseCollection('All games');
-                  }}>Show all games</button
-                >{:else}<button class="primary" onclick={() => (modal = 'add')}
-                  ><Icon name="plus" />Add your first game</button
-                ><button class="secondary" onclick={() => (modal = 'import')}
-                  >Import a library</button
+                  }}>Show all games</Button
+                >{:else}<Button onclick={() => (modal = 'add')}
+                  ><Icon name="plus" />Add your first game</Button
+                ><Button
+                  variant="secondary"
+                  onclick={() => (modal = 'import')}
+                  >Import a library</Button
                 >{/if}
             </div>
           </div>
@@ -839,8 +925,10 @@
               class="load-more"
               bind:this={loadSentinel}
             >
-              <button class="secondary" onclick={() => (renderLimit += 80)}
-                >Show more games ({visible.length - rendered.length} remaining)</button
+              <Button
+                variant="secondary"
+                onclick={() => (renderLimit += 80)}
+                >Show more games ({visible.length - rendered.length} remaining)</Button
               >
             </div>{/if}{/if}
         <footer class="library-footer">
@@ -874,16 +962,16 @@
           size={16}
         /><span
           >{error || (pending && !metadataRunning ? 'Working…' : status)}</span
-        >{#if metadataRunning}<button
-            class="text-button"
-            onclick={() => (stopMetadata = true)}>Stop fetching</button
-          >{/if}<button
-          class="icon-button"
+        >{#if metadataRunning}<Button
+            variant="ghost"
+            onclick={() => (stopMetadata = true)}>Stop fetching</Button
+          >{/if}<Button
+          variant="icon"
           aria-label="Dismiss notification"
           onclick={() => {
             error = '';
             status = '';
-          }}><Icon name="close" size={16} /></button
+          }}><Icon name="close" size={16} /></Button
         >
       </div>{/if}
     {#if warnings.length}<details class="warning-tray">
@@ -1006,13 +1094,13 @@
           <input
             bind:value={importRoot}
             placeholder="Detect automatically"
-          /><button
-            class="secondary"
+          /><Button
+            variant="secondary"
             type="button"
             onclick={() =>
               task(async () => {
                 importRoot = (await pick('folder')) ?? importRoot;
-              })}>Browse</button
+              })}>Browse</Button
           >
         </div></label
       >{#if importSource === 'Steam'}<details>
@@ -1032,15 +1120,15 @@
           <p class="field-hint">Used for this import only. Never saved.</p>
         </details>{/if}
       <div class="form-actions">
-        <button
+        <Button
           type="button"
-          class="secondary"
+          variant="secondary"
           onclick={() => {
             modal = null;
             apiKey = '';
-          }}>Cancel</button
-        ><button class="primary" disabled={pending > 0}
-          >{pending ? 'Importing…' : 'Import library'}</button
+          }}>Cancel</Button
+        ><Button disabled={pending > 0}
+          >{pending ? 'Importing…' : 'Import library'}</Button
         >
       </div>
     </form></Modal
@@ -1058,9 +1146,9 @@
       <label
         >Search Steam
         <div class="input-action">
-          <input bind:value={metadataQuery} /><button
-            class="secondary"
-            disabled={pending > 0}>Search</button
+          <input bind:value={metadataQuery} /><Button
+            variant="secondary"
+            disabled={pending > 0}>Search</Button
           >
         </div></label
       >
@@ -1085,10 +1173,9 @@
           ><Icon name="plus" size={16} /></button
         >{/each}
     </div>
-    {#if selected.target.kind === 'steam' || selected.metadata.steam_app_id}<button
-        class="primary"
+    {#if selected.target.kind === 'steam' || selected.metadata.steam_app_id}<Button
         disabled={pending > 0}
-        onclick={() => fetchMetadata()}>Fetch linked game information</button
+        onclick={() => fetchMetadata()}>Fetch linked game information</Button
       >{/if}</Modal
   >
 {:else if modal === 'artwork' && selected}<Modal
@@ -1096,16 +1183,16 @@
     title="Give it a new cover"
     close={() => (modal = null)}
     ><div class="backup-actions">
-      <button class="secondary" onclick={chooseLocalCover}
-        ><Icon name="folder" />Choose a local cover</button
-      ><button
-        class="secondary"
+      <Button variant="secondary" onclick={chooseLocalCover}
+        ><Icon name="folder" />Choose a local cover</Button
+      ><Button
+        variant="secondary"
         onclick={() =>
           task(async () => {
             if (!selected) return;
             await updateGame(selected, { cover: null });
             modal = null;
-          })}>Use generated artwork</button
+          })}>Use generated artwork</Button
       >
     </div>
     <hr />
@@ -1123,10 +1210,10 @@
           bind:value={sessionArtKey}
           autocomplete="off"
         /></label
-      >{/if}<button
-      class="secondary"
+      >{/if}<Button
+      variant="secondary"
       disabled={pending > 0}
-      onclick={browseArtwork}>Find artwork</button
+      onclick={browseArtwork}>Find artwork</Button
     >
     <div class="artwork-results">
       {#each imageChoices as choice}<ArtworkChoice
@@ -1147,9 +1234,9 @@
       Remove {selected?.name} from your collection? Its files will stay on your device.
     </p>
     <div class="form-actions">
-      <button class="secondary" onclick={() => (modal = null)}>Keep game</button
-      ><button class="primary" disabled={pending > 0} onclick={removeGame}
-        >Remove game</button
+      <Button variant="secondary" onclick={() => (modal = null)}>Keep game</Button
+      ><Button disabled={pending > 0} onclick={removeGame}
+        >Remove game</Button
       >
     </div></Modal
   >
@@ -1162,9 +1249,8 @@
       backup first if you want to keep the current entries.
     </p>
     <div class="form-actions">
-      <button class="secondary" onclick={() => (modal = null)}>Cancel</button
-      ><button
-        class="primary"
+      <Button variant="secondary" onclick={() => (modal = null)}>Cancel</Button
+      ><Button
         disabled={pending > 0}
         onclick={() =>
           task(async () => {
@@ -1173,7 +1259,7 @@
             selectedKey = null;
             modal = null;
             status = 'Library restored';
-          })}>Choose backup</button
+          })}>Choose backup</Button
       >
     </div></Modal
   >{/if}

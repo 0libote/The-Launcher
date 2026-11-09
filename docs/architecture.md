@@ -9,8 +9,9 @@ The earlier fully-Rust/no-webview constraint has been superseded by the product 
 ## Boundaries
 
 - `frontend/App.svelte`: library navigation and orchestration, search/sort/filter, keyboard and controller input, progress and errors.
-- `frontend/components/`: covers, game details, forms, dialogs, and appearance/provider preferences.
+- `frontend/components/`: covers, game details, forms, dialogs, and appearance/provider preferences. `frontend/components/ui/` holds shared primitives (buttons); icons come from `lucide-svelte` through `Icon.svelte`.
 - `frontend/lib/model.ts`: typed frontend data and pure browsing operations.
+- `frontend/lib/utils.ts`: `cn()` class merging (Tailwind-aware) for component variants.
 - `frontend/lib/api.ts`: the single desktop transport boundary. Components do not import Tauri APIs. A later server transport can reuse the screens without giving browsers local process access.
 - `frontend/lib/artwork.ts`: lazy thumbnail requests, four in-flight requests, 64-entry LRU cache.
 - `src/main.rs`: existing data location, single-instance lock, fail-safe startup, Tauri command registration.
