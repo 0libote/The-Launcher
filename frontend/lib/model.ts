@@ -125,6 +125,22 @@ export const t3LightSkin = (): Skin => ({
   accent: [219, 39, 119],
   selection: [219, 39, 119],
 });
+export const legacyDefaultSkin = (): Skin => ({
+  background: [16, 20, 32],
+  navigation: [21, 26, 40],
+  surface: [29, 35, 51],
+  raised: [38, 46, 64],
+  text: [243, 240, 232],
+  muted: [160, 171, 190],
+  faint: [132, 145, 165],
+  line: [49, 59, 80],
+  accent: [255, 151, 124],
+  selection: [159, 222, 204],
+});
+/** True when a skin is the pre-T3 default, i.e. never customized by the user. */
+export function isLegacyDefaultSkin(skin: Skin): boolean {
+  return JSON.stringify(skin) === JSON.stringify(legacyDefaultSkin());
+}
 export const t3DarkSkin = (): Skin => ({
   background: [9, 9, 11],
   navigation: [16, 16, 19],

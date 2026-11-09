@@ -1,5 +1,12 @@
 import { describe, expect, test } from 'bun:test';
-import { filterGames, identity } from './model';
+import {
+  filterGames,
+  identity,
+  isLegacyDefaultSkin,
+  legacyDefaultSkin,
+  t3DarkSkin,
+  t3LightSkin,
+} from './model';
 import { fixtureGames } from './fixtures';
 describe('library browsing', () => {
   test('combines collection, search, and installation without changing source data', () => {
@@ -34,5 +41,13 @@ describe('library browsing', () => {
     expect(
       filterGames(fixtureGames(), 'All games', 'DEMO COLLECTION', 'name'),
     ).toHaveLength(12);
+  });
+  test('only the untouched pre-T3 skin counts as legacy', () => {
+    expect(isLegacyDefaultSkin(legacyDefaultSkin())).toBe(true);
+    expect(isLegacyDefaultSkin(t3LightSkin())).toBe(false);
+    expect(isLegacyDefaultSkin(t3DarkSkin())).toBe(false);
+    expect(
+      isLegacyDefaultSkin({ ...legacyDefaultSkin(), accent: [1, 2, 3] }),
+    ).toBe(false);
   });
 });

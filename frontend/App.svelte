@@ -24,6 +24,7 @@
     lastPlayed,
     t3LightSkin,
     t3DarkSkin,
+    isLegacyDefaultSkin,
     type Collection,
     type Game,
     type Library,
@@ -174,6 +175,13 @@
   );
   const coverUrl = (_game: Game) => null;
   function adopt(snapshot: Snapshot) {
+    // Existing installs still carry the pre-T3 navy skin. Migrate those to
+    // the matching T3 palette; customized skins are left untouched.
+    const dark = effectiveAppearance === 'dark';
+    for (const layout of snapshot.workspace.layouts) {
+      if (isLegacyDefaultSkin(layout.skin))
+        layout.skin = dark ? t3DarkSkin() : t3LightSkin();
+    }
     library = snapshot.library;
     workspace = snapshot.workspace;
     settings = snapshot.settings;
