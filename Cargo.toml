@@ -1,30 +1,45 @@
 [package]
 name = "the-launcher"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.92"
 description = "A native, local-first game library with a console soul"
 publish = false
 
+[lib]
+name = "the_launcher"
+path = "src/lib.rs"
+
+[[bin]]
+name = "the-launcher"
+path = "src/main.rs"
+required-features = ["desktop"]
+
+[features]
+default = []
+desktop = ["dep:tauri", "dep:rfd"]
+custom-protocol = ["desktop", "tauri/custom-protocol"]
+
 [dependencies]
 anyhow = "1"
+base64 = "0.22"
 directories = "6"
 fs2 = "0.4"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 open = "5"
 reqwest = { version = "0.12", default-features = false, features = ["blocking"] }
-rune = { git = "https://github.com/anomalyco/rune", rev = "a7f276c3630f85a06a0230295da4d2bd172d8d3b", features = ["native-file-dialog"] }
+rfd = { version = "0.15", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tauri = { version = "2", optional = true }
 tempfile = "3"
 
-[target.'cfg(target_os = "linux")'.dependencies]
-evdev = "0.13"
-
-[target.'cfg(windows)'.dependencies]
-rusty-xinput = "1"
+[target.'cfg(target_os = "windows")'.dependencies]
 winreg = "0.55"
 reqwest = { version = "0.12", default-features = false, features = ["native-tls"] }
 
 [target.'cfg(not(windows))'.dependencies]
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }

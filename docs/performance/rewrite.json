@@ -1,0 +1,101 @@
+{
+  "measuredAt": "2026-11-09T11:22:21.405Z",
+  "browser": "156.0.8078.79",
+  "hardware": {
+    "cpu": "Intel(R) Core(TM) i3-6100T CPU @ 3.20GHz",
+    "logicalCPUs": 4,
+    "platform": "linux",
+    "arch": "x64",
+    "host": "Shared host; background load and caches vary"
+  },
+  "environment": "Headless Chromium on Linux; production Vite assets over localhost. Synthetic games, generated covers. Not native Tauri or Windows. Ready includes navigation, UI and fonts; search includes automation overhead. Heap is JS only; idle is renderer TaskDuration over five seconds after a one-second settling period.",
+  "assets": [
+    {
+      "name": "Manrope--3e8GDV3.ttf",
+      "bytes": 97500
+    },
+    {
+      "name": "Oxanium-DiD2HeIG.ttf",
+      "bytes": 29092
+    },
+    {
+      "name": "index-5ErzSpEJ.js",
+      "bytes": 96147
+    },
+    {
+      "name": "index-Ehe7gYgh.css",
+      "bytes": 23874
+    }
+  ],
+  "results": [
+    {
+      "games": 100,
+      "samples": [
+        {
+          "readyMs": 827,
+          "searchMs": 60,
+          "jsHeapMiB": 5.3,
+          "idleRendererTaskPercent": 0.16
+        },
+        {
+          "readyMs": 657,
+          "searchMs": 80,
+          "jsHeapMiB": 5.4,
+          "idleRendererTaskPercent": 0.11
+        },
+        {
+          "readyMs": 771,
+          "searchMs": 64,
+          "jsHeapMiB": 5.4,
+          "idleRendererTaskPercent": 0.21
+        }
+      ]
+    },
+    {
+      "games": 1000,
+      "samples": [
+        {
+          "readyMs": 848,
+          "searchMs": 113,
+          "jsHeapMiB": 12,
+          "idleRendererTaskPercent": 0.16
+        },
+        {
+          "readyMs": 937,
+          "searchMs": 129,
+          "jsHeapMiB": 11.8,
+          "idleRendererTaskPercent": 0.18
+        },
+        {
+          "readyMs": 919,
+          "searchMs": 140,
+          "jsHeapMiB": 11.8,
+          "idleRendererTaskPercent": 0.19
+        }
+      ]
+    },
+    {
+      "games": 5000,
+      "samples": [
+        {
+          "readyMs": 1137,
+          "searchMs": 211,
+          "jsHeapMiB": 26.5,
+          "idleRendererTaskPercent": 0.14
+        },
+        {
+          "readyMs": 1188,
+          "searchMs": 181,
+          "jsHeapMiB": 26.5,
+          "idleRendererTaskPercent": 1.69
+        },
+        {
+          "readyMs": 823,
+          "searchMs": 158,
+          "jsHeapMiB": 26.5,
+          "idleRendererTaskPercent": 0.22
+        }
+      ]
+    }
+  ]
+}

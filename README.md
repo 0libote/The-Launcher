@@ -1,67 +1,63 @@
 # The Launcher
 
-A native Rust game launcher with a Rune-rendered shelf. Inspired by Playnite’s unified library and [BoxShelf’s](https://github.com/sassiestrhihno/boxshelf-beta) tactile shelves. This is an independent implementation; no source or artwork is copied from either project.
+A personal game shelf with a Svelte 5 / TypeScript interface and a Tauri 2 / Rust desktop core. Browse your PC collection, bring Steam/Epic/Xbox libraries together, and launch games from one place. Inspired by Playnite’s unified library and the tactile appeal of physical game shelves; this is an independent implementation.
 
-**Status: Rune-native foundation, mid-migration, not a packaged release.** Application logic and the shell are Rust on Rune. Bun provides convenient development commands; the built application does not require Bun, Node, a browser, or a webview. Application logic and UI are Rust. Bun provides convenient development commands; the built application does not require Bun, Node, a browser, or a webview.
+**Status: desktop rewrite implemented; Windows runtime and installer validation remain.** The previous Rune renderer has been replaced. Existing schema-1 library data and its location are retained. This is not yet a signed, release-ready distribution.
 
-The card art is original gradient art with initials.
+## What you can do
 
-## What works
+- Browse grid, list, and shelf views; search titles, genres, and tags; filter favorites, recently played, installed games, and stores.
+- Add and edit executable entries, arguments, working directories, tags, and series. Favorite, hide, restore, or remove entries without deleting game files.
+- Import installed Steam, Epic, and Xbox entries. Steam optionally imports account-owned games using a session-only API key. Scans merge without replacing your custom titles, favorites, or covers.
+- Launch through the executable or the correct store client. Known uninstalled Steam entries request installation, without recording a played timestamp.
+- Match games to Steam metadata; download descriptions and artwork; preview/select alternate artwork; use local PNG/JPEG covers or original generated fallback art.
+- Change named layouts, colors, cover sizes, navigation/details placement, and default view in **Preferences**. Changes preview live; Cancel restores the previous appearance.
+- Export and restore a validated backup of library entries, workspace, and metadata preferences. Game files and artwork files are not included.
+- Browse with keyboard controls, a controller, or the mouse. The responsive browser layout prepares the interface for a later mobile catalogue; it is not a server implementation.
 
-- Browse the shelf in grid, list, or shelf views, search by name, filter by collection (All/Favorites/PC/Steam/Epic/Xbox/Hidden), favorite games, and inspect details.
-- Add PC games through a dialog with inline validation, edit launch options, and remove entries or hide store games (Steam/Epic/Xbox, restorable from Hidden).
-- Import Steam, Epic, and Xbox libraries through background scans with warnings surfaced; entries merge without touching custom names or favorites.
-- Fetch Steam descriptions, credits, genres, features, age ratings, critic scores, store links, and artwork; match PC/Epic/Xbox entries to Steam titles for metadata and pick alternate artwork. Automatic fills run after imports and saves unless disabled.
-- Choose local PNG/JPEG cover art per game, with original generated art as a fallback.
-- Arrange navigation/details panels, pick views and tile sizes, and restyle with named layouts and color presets, all saved to a workspace file.
-- Launch games through Play, with errors surfaced in the status bar. On Windows, Steam entries play/install through the Steam client, Epic through the Epic launcher protocol, and Xbox through `explorer.exe shell:AppsFolder`.
-- Persist a local JSON library with atomic replacement and a single-instance lock.
-- Browse with the mouse and search by typing. Arrow keys move selection (a full row up/down in the grid), Enter opens the details modal then launches, and Escape backs out of dialogs. Controllers work too: d-pad/left stick to move, South/A or Start to confirm, East/B to go back (evdev on Linux, XInput on Windows).
+Real libraries start empty. Synthetic games appear only in the explicit browser demo. The app uses bundled fonts; no remote font service or art is required to browse offline.
 
-No demo games are added to the real library. The gradient card art is original, not downloaded box art. Artwork downloads come from Steam or SteamGridDB only when you fetch them. Controller input is driven by OS backends (no extra setup) but still needs validation on real Windows hardware; television-distance tuning is future work.
+## Develop
 
-## Develop on Windows
+Install Rust (the version is pinned in `rust-toolchain.toml`) and Bun (pinned in `package.json`). On Windows, install Visual Studio Build Tools with Desktop development with C++ and a Windows SDK. Tauri requires WebView2 on Windows; the NSIS installer uses Tauri’s default WebView2 installation handling.
 
-Install Rust **1.99.1** (pinned by `rust-toolchain.toml` for the Rune dependency) with the MSVC toolchain and Visual Studio Build Tools (Desktop development with C++, including a Windows SDK). Install [Bun](https://bun.sh/docs/installation). A GPU/driver supporting modern DirectX 12 or Vulkan is needed.
-
-```powershell
+```sh
+bun install --frozen-lockfile
 bun run dev
 bun run check
 bun run build
 ```
 
-There are no JavaScript packages to install. `cargo run` works directly too. First compilation downloads Rust dependencies and takes longer. Release output: `target/release/the-launcher.exe`. No installer, signing, or automatic update system exists yet.
+`bun run dev` starts Vite and the native Tauri app. `bun run build` produces a release executable and an unsigned Windows NSIS installer under `target/release/`. Bun/Node and a development server are not shipped with the installed app. Native Windows controls provide window dragging, minimizing, maximizing, and closing.
 
-Linux is a development host, not a supported release target. Install C/C++ build tools, pkg-config, and the X11/Wayland and OpenGL development packages for your distribution. A graphical session and a working native file-dialog backend are needed to exercise the UI. Linux development can launch native executables; Windows requires `.exe` files.
+For frontend development without native prerequisites:
 
-## Add and play
+```sh
+bun run dev:web
+```
 
-1. Select **Add game**, then **Browse…**, and choose a game’s `.exe`.
-2. Give it a name. Arguments go one per line: `--profile` and `My Profile` are two lines. Do not wrap arguments containing spaces in quotes. Leave the working directory empty to use the executable’s folder.
-3. Save, select the tile, and press **Play**. A launch request means the OS accepted the process/URI request, not that the game finished loading.
-4. For installed Steam games, select **Import Steam → Import library**. Windows detects Steam through its registry path; use the optional override if needed. To include owned, uninstalled games, provide SteamID64 and a personal API key for that import. Read [Steam integration](docs/steam-integration.md) for details and parity limits. For Epic, use **Import Epic** (local `.item` manifests, see [Epic integration](docs/epic-integration.md)); for Xbox, use **Import Xbox** (installed UWP packages on Windows, see [Xbox integration](docs/xbox-integration.md)).
+Open `http://localhost:1420/?demo`. Demo edits stay in that browser tab’s session storage and never touch the real library. Without `?demo`, a plain browser displays a desktop-app explanation and an empty library. There is no Docker API or synchronization yet.
 
-Import is additive. It does not remove uninstalled games or overwrite your existing names/favorites. Steam manifests can include tools or DLC; this importer excludes the redistributable but does not query Steam’s catalogue for every edge case. Epic manifests exclude DLC/plugins; Xbox imports include UWP packages that are not games until you hide them. Disconnecting a drive skips that additional library. Malformed manifests produce warnings while valid entries still import. An unusable primary root or failed account request leaves the library unchanged. Refresh through the matching Import after the store client finishes an install/uninstall.
+Linux is a development host. Native Linux builds require Tauri’s GTK/WebKit development packages; see [development](docs/development.md). `cargo test --lib` and `bun run check` test the Rust core without those GUI packages.
 
-Removing an entry only removes it from this launcher, never from disk or Steam. Executables run with the launcher’s normal user permissions; add programs you trust.
+## Data and safety
 
-## Data and recovery
+The existing data location is preserved: `%LOCALAPPDATA%\TheLauncher\data\library.json` on Windows. **Preferences → Library & backups → Open library folder** opens the actual location. The adjacent `workspace.json`, `metadata.json`, and `artwork/` retain presentation, provider preferences, and downloaded art.
 
-On Windows, the library is `%LOCALAPPDATA%\TheLauncher\data\library.json`. Use **Open library folder** for the actual platform-specific location. The adjacent `library.lock` prevents two instances from overwriting each other; the OS releases it when the app exits, and the file may remain.
+The lifetime OS lock prevents competing instances. Edits save an atomic replacement before updating memory; overlapping mutations are serialized. Damaged or newer library files stop startup with a recovery error instead of being overwritten. Close the app before manual edits and keep backups.
 
-Back up `library.json` before manual edits. Close the app first. If JSON is damaged or its schema is newer than supported, startup stops and displays its path instead of resetting your collection. Restore your backup or repair the file. Atomic writes protect an existing library if saving fails; they are not a versioned backup system or a guarantee against every power-loss scenario.
+Arguments go one per line; values containing spaces stay unquoted. Launching uses argument vectors rather than shell strings and does not elevate permissions. Success means the OS accepted dispatch, not that a game finished loading. The launcher does not track playtime or running-state detection. Closing it leaves games running.
 
-## Project notes
+## Validation and direction
 
-- [Visual layout editor and skinnable frame](docs/customization.md)
-- [Steam integration and Playnite reference](docs/steam-integration.md)
-- [Epic integration and Playnite reference](docs/epic-integration.md)
-- [Xbox integration and Playnite reference](docs/xbox-integration.md)
-- [Metadata providers, automatic fetching, and artwork choices](docs/metadata.md)
-- [Bundled visual system and cover art](docs/design.md)
-- [Architecture and decisions](docs/architecture.md)
-- [Development and validation](docs/development.md)
+- [Rewrite report, screenshots, performance and limitations](docs/rewrite-report.md)
+- [Architecture](docs/architecture.md)
+- [Development and Windows smoke tests](docs/development.md)
 - [Roadmap](docs/roadmap.md)
-- [Data format](docs/library-format.md)
+- [Appearance and workspace](docs/customization.md)
+- [Visual design](docs/design.md)
+- [Library format](docs/library-format.md)
+- [Metadata](docs/metadata.md)
+- [Steam](docs/steam-integration.md), [Epic](docs/epic-integration.md), [Xbox](docs/xbox-integration.md)
 
-Keep behavioral changes and their docs in the same change. Built-in metadata providers now complement local launching; external plugins and synchronization remain future work. The project’s distribution license has not been chosen yet; choose one before publishing releases.
+The next product steps are retro/physical ownership records, external emulator profiles, then an optional Docker-hosted mobile catalogue. Browser emulation and remote streaming are later integrations. A distribution license has not been chosen; choose one before publishing releases.

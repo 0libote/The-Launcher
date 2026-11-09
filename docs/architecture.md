@@ -1,70 +1,40 @@
 # Architecture
 
-## Decision: native Rust, Bun for commands
+## Decision: web UI, native Rust services
 
-The user’s constraint is a fully Rust launcher that uses Bun. A webview stack would put UI behavior in JavaScript or require a Rust-to-Wasm build pipeline. Instead, Rune renders a native Rust interface on its own GPU renderer with headless snapshots for agent-checked UI work. Bun runs the development commands and the small cross-platform check script. It is not an application runtime or dependency manager for Rust; Cargo owns Rust dependencies and `Cargo.lock` pins them.
+The Launcher uses Tauri 2 with a Svelte 5 / TypeScript interface, built by Vite and Bun. Rust retains library persistence, process dispatch, store discovery, metadata providers, bounded image decoding, and workspace validation. Rune is replaced, rather than wrapped or shipped alongside the new interface.
 
-This keeps a single language for the application and leaves room for a more deliberate console UI. Tradeoffs: Rune is pre-release and pinned to a `dev` rev, accessibility depends on Rune/AccessKit and platform support, and controllers need OS backends (evdev on Linux, XInput on Windows) plus hardware validation. Hardware and screen-reader checks on Windows remain necessary.
+The earlier fully-Rust/no-webview constraint has been superseded by the product goals: easier visual iteration, a lightweight desktop game shelf, and a future responsive browser catalogue. Tauri uses the system webview; Bun is a development tool, not a shipped runtime. A smaller frontend bundle does not prove lower desktop memory use: Windows runtime measurement remains necessary.
 
 ## Boundaries
 
-| File | Responsibility |
-| --- | --- |
-| `src/main.rs` | Local data path, instance lock, fail-safe startup, window creation |
-| `src/shell.rs` | Rune shell: toolbar, sidebar, grid/list/shelf views, game details modal/right pane, keyboard and controller navigation, search, add/edit/remove dialogs, Steam/Epic/Xbox imports, metadata & artwork, cover art, workspace editor; headless scenes and shell tests |
-| `src/gamepad.rs` | Controller backend (binary crate): evdev on Linux, XInput on Windows; button/stick events become channel actions drained by the shell poll loop |
-| `src/library.rs` | Versioned data model, duplicate checks, transactional edits and atomic persistence |
-| `src/launch.rs` | Validate launch targets, construct launch plans, start processes or Steam/Epic/Xbox protocol handlers |
-| `src/steam.rs` | Client discovery, local installed manifests, optional owned-game API merge |
-| `src/epic.rs` | Local Epic `.item` manifest scan, DLC/plugin filtering |
-| `src/xbox.rs` | Installed UWP package scan (PowerShell JSON + manifest AppId), AppsFolder monikers |
-| `src/metadata.rs` | Metadata model/settings, built-in providers, bounded network/image cache, preservation-aware merge |
-| `src/workspace.rs` | User-owned layout/skin model, validation, atomic persistence |
-| `scripts/check.ts` | Run formatting, Clippy, and tests through Bun on Windows or Unix |
+- `frontend/App.svelte`: library navigation and orchestration, search/sort/filter, keyboard and controller input, progress and errors.
+- `frontend/components/`: covers, game details, forms, dialogs, and appearance/provider preferences.
+- `frontend/lib/model.ts`: typed frontend data and pure browsing operations.
+- `frontend/lib/api.ts`: the single desktop transport boundary. Components do not import Tauri APIs. A later server transport can reuse the screens without giving browsers local process access.
+- `frontend/lib/artwork.ts`: lazy thumbnail requests, four in-flight requests, 64-entry LRU cache.
+- `src/main.rs`: existing data location, single-instance lock, fail-safe startup, Tauri command registration.
+- `src/desktop.rs`: validated application services and Tauri commands. Pure services compile/test without GUI libraries; native commands are behind the `desktop` feature.
+- `src/library.rs`, `launch.rs`, `steam.rs`, `epic.rs`, `xbox.rs`, `metadata.rs`, `workspace.rs`: retained native domains and their fixture tests.
 
-There is no plugin API, service container, database, or event bus. Add boundaries when a concrete integration needs them. Keep launch target variants explicit, so data cannot supply arbitrary shell command strings.
+The default Cargo feature set tests the Rust core without GTK/WebKit. `bun run dev` and `bun run build` enable the desktop feature through the Tauri configuration. No local HTTP server is required in the installed app. Docker hosting and synchronization are future work, not an embedded desktop web server.
 
-## Library edits
+## Data and launching
 
-UI actions clone the small in-memory library, apply and validate an edit, serialize to a temporary file in the data directory, sync the temporary file, and atomically persist it over the existing file. The UI adopts the new library only after persistence succeeds. An exclusive file lock lives for the application lifetime. Read or schema errors stop startup; they never silently create an empty collection over existing data.
+The data directory remains `ProjectDirs::from("", "", "TheLauncher")`. Existing schema-1 JSON libraries and workspace/provider files remain readable. The frontend identifies entries by launch-target identity, never sorted vector indices. This is a migration bridge; ownership/catalogue IDs should replace launch-derived identity when non-launchable physical collections are introduced.
 
-Executable paths are canonicalized at entry, and duplicate executable checks ignore ASCII case on Windows. Windows path aliases and non-ASCII case differences are not a complete filesystem identity check. Launch-time existence checks handle moved or removed games. Missing executable paths remain in the library so users can edit or remove them. Store entries (Steam/Epic/Xbox) hide instead of deleting: `Game.hidden` defaults to visible, stays out of the normal collections while set, and reappears through the Hidden collection. Re-imports preserve the flag.
+Edits validate and save an atomic replacement before publishing state. A lifetime OS file lock prevents competing app instances. Invalid/newer libraries stop startup instead of resetting the collection. Launching uses typed targets and argument vectors, without shell interpolation or elevation. Success means dispatch accepted, not proof a game started; closing the app leaves games running.
 
-## Launching
+Imports merge by store identity and preserve custom titles, favorites, hidden flags and artwork. Network/scanning/image work runs off the UI thread. Metadata uses request-time baselines to preserve edits made during fetches. Account and artwork API keys are session inputs, never persisted.
 
-Executable launches use `std::process::Command` with a vector of arguments and an explicit working directory. There is no shell expansion, command-line interpolation, or elevation. Child processes are reaped while the launcher runs. Closing the launcher leaves games running. Games that spawn another process may exit their original process immediately; this version does not track playtime or claim running-state detection.
+Artwork is read through bounded Rust decoding and returned as PNG thumbnails, not unrestricted filesystem URLs. Missing artwork has deterministic generated covers. Only nearby covers are requested; list/grid/shelf screens progressively render entries. Browsing, filtering, and selection stay local and usable offline.
 
-Steam targets contain a numeric app ID. Windows starts detected `steam.exe -silent` with a launch or install URI as a separate argument; non-Windows development uses the registered handler. Known uninstalled entries request installation and do not record a played timestamp. Epic targets launch through `com.epicgames.launcher://` (full catalog form with app-only fallback). Xbox targets launch through `explorer.exe shell:AppsFolder\…` on Windows. Success means dispatch was accepted, not proof that the store client started the game. Launch timestamps are recorded after dispatch. If timestamp persistence fails, the UI reports that error even though the game may already have started.
+## Desktop versus browser
 
-## Storefront integrations
+A browser without Tauri displays an empty explanatory screen. The explicit `?demo` mode uses synthetic fixture entries, generated art and tab-scoped session storage; it cannot read or overwrite a real collection. It exists for UI development, screenshots, and performance testing. It is not the Docker server or synchronization implementation.
 
-See [the Steam Playnite reference and parity table](steam-integration.md),
-[Epic integration](epic-integration.md), and [Xbox integration](xbox-integration.md).
-Local discovery merges by store identity (Steam app ID, Epic AppName,
-Xbox package moniker); Steam additionally supports optional account-owned
-games. Client launch stays in `launch.rs`; the UI owns neither protocol
-parsing nor network credentials after dispatch. Imports run on worker
-threads. Invalid individual manifests/packages become warnings; fatal
-root/account errors leave existing library state intact.
+Future server ownership records must separate catalogue information, owned copies, and device-specific availability. A phone must be able to list a physical cartridge or remote game without pretending it has a Windows launch path. Start the eventual server with read-only published catalogue access; leave local launching in the desktop agent.
 
-## User-owned workspace
+## Verification boundaries
 
-The rendering backend is Rune (native GPU, headless-capable). A separate `workspace.json` stores named panel arrangements, views, sizes, and skin colors; it contains no games or secrets. The workspace editor overlay edits layouts live, validates on save, and restores the snapshot on cancel. Presentation changes do not migrate or rewrite game launch targets.
-
-The launcher draws its own titlebar (`App::titlebar`, 60pt) with a draggable toolbar, brand mark, and search pill; launching happens from the game details modal. Rune keeps the platform's window controls over it (traffic lights on macOS, caption buttons on Windows) with `chrome_insets` padding. File pickers are native OS dialogs through Rune. Windows Snap/high-DPI behavior still requires native validation. On Linux the native frame stays and the insets report zero.
-
-## Visual direction
-
-The midnight-blue shell, coral primary actions, mint selection, gradient card art with initials, local cover images, and grid/list/shelf views are described in [the visual system](design.md). The shell lives in `src/shell.rs`: one Rune view with a toolbar, sidebar, game views, and a game details modal/right pane, plus `--scene` fixtures that render headlessly to PNG and element-tree JSON. No game data or launch execution lives in the view helpers.
-
-An optional, defaulted `Game.cover` path extends schema 1 compatibly. Covers remain local references with a generated fallback. Built-in metadata providers populate them through the local artwork cache. PNG/JPEG are the only enabled image formats. Retained GPU textures and decode dimensions are bounded; worker threads decode files to UI-ready bytes and the UI inserts a few per frame, so startup and bulk fetches never block on image decoding.
-
-The shelf remains two-dimensional. Controller input, a 3D renderer, and television-distance tuning are separate later iterations. The launcher draws a custom titlebar with window-drag regions; native window operations go through the backend.
-
-Every surface is skin-driven: `Look::of` resolves the workspace skin (background, navigation, surface, raised, text, muted, faint, line, accent, selection) per frame into the titlebar, rail, shelf, cards, details, and dialogs. There is no generic base-theme fallback; the workspace editor previews all eight editable skin fields live.
-
-## Metadata pipeline
-
-See [metadata behavior and provider references](metadata.md). Steam account ownership import and public metadata fetching are separate operations; metadata needs no Steam Web API account key. The metadata overlay queues snapshots of games on a worker thread (short politeness gap, stops on rate limit) and merges results on the UI thread in memory immediately, flushing to disk in batches plus a final flush on Done/stop, with a stop button and per-game progress. At most a few merges land per frame so bursts cannot hitch the shelf. Matching a PC, Epic, or Xbox game records a separate Steam metadata ID without changing its launch target. Results resolve by target plus metadata ID instead of vector index, so removals/reordering cannot attach data to another entry. Title matches and artwork choices that arrive late are dropped unless the panel still shows their game and query.
-
-The merge fills empty fields unless explicit per-game replacement was selected, compares every field against its request-time baseline to preserve in-flight edits, and retains source attribution. Artwork requests use fixed provider origins, restricted HTTPS CDN hosts, disabled redirects, time/size/decode limits, and atomic PNG cache writes. No key is serialized. `metadata.json` owns provider/download preferences independently of `workspace.json`; cached images live under `artwork/`. Decoded pixels live in a 64-entry covers cache plus a panel-scoped choice cache that clears when the panel reopens or a new browse starts, so browsing artwork cannot grow retained images without bound. The current concrete provider choices are Steam text/art and optional SteamGridDB art with Steam fallback; there is no dynamic plugin loader.
+Svelte diagnostics, browser workflow/accessibility tests, Rust service tests, production bundle measurements, and cross-compilation are separate evidence. Browser tests do not prove native IPC/window/dialog behavior. Cross-compilation does not validate Windows runtime behavior. See `development.md` and `rewrite-report.md` for measured results and remaining release gates.

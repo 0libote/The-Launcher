@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8" /><meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+  /><title>Launcher frontend measurements</title
+  ><style>
+    html,
+    body {
+      margin: 0;
+      background: transparent;
+      color: var(--foreground);
+      font-family: var(--font-sans, system-ui);
+    }
+    * {
+      box-sizing: border-box;
+    }
+    h2 {
+      font-size: 18px;
+      font-weight: 600;
+      margin: 0 0 8px;
+    }
+    p {
+      font-size: 12px;
+      color: var(--muted-foreground);
+      line-height: 1.7;
+      margin: 8px 0;
+    }
+    .buttons {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin: 18px 0;
+    }
+    button {
+      font: inherit;
+      font-size: 12px;
+      padding: 8px 12px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius, 6px);
+      background: var(--secondary);
+      color: var(--foreground);
+      cursor: pointer;
+    }
+    button[aria-pressed='true'] {
+      border-color: var(--chart-1);
+      color: var(--chart-1);
+    }
+    button:focus-visible {
+      outline: 2px solid var(--ring);
+      outline-offset: 3px;
+    }
+    .chart {
+      height: 210px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-evenly;
+    }
+    .row {
+      display: grid;
+      grid-template-columns: 85px minmax(0, 1fr) 72px;
+      align-items: center;
+      gap: 12px;
+      font-size: 12px;
+    }
+    .track {
+      height: 32px;
+      position: relative;
+      background: var(--secondary);
+      border-radius: 4px;
+    }
+    .bar {
+      position: absolute;
+      left: 0;
+      top: 3px;
+      height: 26px;
+      background: var(--chart-1);
+      border-radius: 3px;
+      opacity: 0.85;
+    }
+    .spread {
+      position: absolute;
+      top: 13px;
+      height: 6px;
+      background: var(--foreground);
+      opacity: 0.3;
+    }
+    .number {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+    .axis {
+      display: flex;
+      justify-content: space-between;
+      margin: 0 84px 0 97px;
+      font-size: 10px;
+      color: var(--muted-foreground);
+    }
+    small {
+      color: var(--muted-foreground);
+      font-size: 11px;
+    }
+    section {
+      padding: 0;
+    }
+    @media (max-width: 420px) {
+      .row {
+        grid-template-columns: 65px minmax(0, 1fr) 64px;
+        gap: 8px;
+      }
+      .axis {
+        margin-left: 73px;
+        margin-right: 72px;
+      }
+    }
+  </style>
+  <section aria-label="Frontend benchmark chart">
+    <h2>Frontend performance</h2>
+    <p>
+      Production UI in headless Chromium on Linux. Synthetic games and generated
+      covers. These are browser measurements, not native Windows results.
+    </p>
+    <div class="buttons" role="group" aria-label="Measurement">
+      <button data-key="searchMs" aria-pressed="true">Search</button
+      ><button data-key="readyMs" aria-pressed="false">Library ready</button
+      ><button data-key="jsHeapMiB" aria-pressed="false">
+        JavaScript heap
+      </button>
+    </div>
+    <div
+      id="chart"
+      class="chart"
+      role="img"
+      aria-label="Search measurements"
+    ></div>
+    <div class="axis"><span>0</span><span id="maximum"></span></div>
+    <p id="explanation"></p>
+    <small
+      >Colored bars show the median of three runs; the thin marks show their
+      range. Ready time includes navigation and fonts. Search includes
+      automation overhead. Heap excludes native/webview/GPU memory.</small
+    >
+  </section>
+  <script>
+    const data = [
+      {
+        games: 100,
+        samples: [
+          {
+            readyMs: 827,
+            searchMs: 60,
+            jsHeapMiB: 5.3,
+            idleRendererTaskPercent: 0.16,
+          },
+          {
+            readyMs: 657,
+            searchMs: 80,
+            jsHeapMiB: 5.4,
+            idleRendererTaskPercent: 0.11,
+          },
+          {
+            readyMs: 771,
+            searchMs: 64,
+            jsHeapMiB: 5.4,
+            idleRendererTaskPercent: 0.21,
+          },
+        ],
+      },
+      {
+        games: 1000,
+        samples: [
+          {
+            readyMs: 848,
+            searchMs: 113,
+            jsHeapMiB: 12,
+            idleRendererTaskPercent: 0.16,
+          },
+          {
+            readyMs: 937,
+            searchMs: 129,
+            jsHeapMiB: 11.8,
+            idleRendererTaskPercent: 0.18,
+          },
+          {
+            readyMs: 919,
+            searchMs: 140,
+            jsHeapMiB: 11.8,
+            idleRendererTaskPercent: 0.19,
+          },
+        ],
+      },
+      {
+        games: 5000,
+        samples: [
+          {
+            readyMs: 1137,
+            searchMs: 211,
+            jsHeapMiB: 26.5,
+            idleRendererTaskPercent: 0.14,
+          },
+          {
+            readyMs: 1188,
+            searchMs: 181,
+            jsHeapMiB: 26.5,
+            idleRendererTaskPercent: 1.69,
+          },
+          {
+            readyMs: 823,
+            searchMs: 158,
+            jsHeapMiB: 26.5,
+            idleRendererTaskPercent: 0.22,
+          },
+        ],
+      },
+    ];
+    const names = {
+      searchMs: ['Search', 'ms'],
+      readyMs: ['Library ready', 'ms'],
+      jsHeapMiB: ['JavaScript heap', 'MiB'],
+    };
+    function draw(key) {
+      const [name, unit] = names[key];
+      const rows = data.map((row) => {
+        const values = row.samples.map((s) => s[key]).sort((a, b) => a - b);
+        return {
+          games: row.games,
+          median: values[1],
+          min: values[0],
+          max: values[2],
+        };
+      });
+      const max = Math.ceil(Math.max(...rows.map((r) => r.max)) * 1.1);
+      document.getElementById('chart').innerHTML = rows
+        .map(
+          (row) =>
+            '<div class="row"><span>' +
+            row.games.toLocaleString() +
+            ' games</span><div class="track" title="Range: ' +
+            row.min +
+            '–' +
+            row.max +
+            ' ' +
+            unit +
+            '"><div class="bar" style="width:' +
+            (row.median / max) * 100 +
+            '%"></div><div class="spread" style="left:' +
+            (row.min / max) * 100 +
+            '%;width:' +
+            Math.max(1, ((row.max - row.min) / max) * 100) +
+            '%"></div></div><span class="number">' +
+            row.median +
+            ' ' +
+            unit +
+            '</span></div>',
+        )
+        .join('');
+      document.getElementById('maximum').textContent = max + ' ' + unit;
+      document
+        .getElementById('chart')
+        .setAttribute(
+          'aria-label',
+          name +
+            ': ' +
+            rows
+              .map((r) => r.games + ' games ' + r.median + ' ' + unit)
+              .join(', '),
+        );
+      document.getElementById('explanation').textContent =
+        'Measured 2026-11-09 with Chromium 156.0.8078.79. Cold-load variation means ready time is not monotonic with library size.';
+      document
+        .querySelectorAll('button')
+        .forEach((button) =>
+          button.setAttribute(
+            'aria-pressed',
+            String(button.dataset.key === key),
+          ),
+        );
+    }
+    document
+      .querySelectorAll('button')
+      .forEach((button) => (button.onclick = () => draw(button.dataset.key)));
+    draw('searchMs');
+  </script>
+</html>

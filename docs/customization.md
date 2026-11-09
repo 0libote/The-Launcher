@@ -1,42 +1,19 @@
 # Build your workspace
 
-The launcher is a library/launch engine with a user-arranged presentation. The bundled appearance is a starting point. Users build their layout through **Customize**; they do not need to author Rust or a theme package.
+Open **Preferences → Appearance** to change the shell. Changes preview across the library and dialogs; **Save preferences** persists the workspace, and **Cancel** restores the previous appearance.
 
-## Visual editor
+- Choose grid, list, or shelf view. Shelf uses a wrapped grid of case-like covers with a shelf edge, not a 3D renderer.
+- Place navigation on the left/right or hide it; the top-left navigation toggle can reopen it. On phones navigation becomes a drawer.
+- Open game details in a dialog or side panel. **Open on request** retains the dialog without a persistent side panel; selecting a game always makes its actions available.
+- Put the search/view toolbar above or below the collection.
+- Adjust cover and panel widths. Narrow viewports cap sizes to keep the library usable.
+- Change all ten skin colors. Covers keep their own artwork colors. Your choices can affect contrast; the bundled palette is tested, arbitrary user colors are not guaranteed accessible.
+- Duplicate/name up to 32 layouts and switch between them. Existing workspace files retain their model and saved settings.
 
-Select **Customize** in the launcher’s title bar. It remains available even when navigation and details are hidden. In full screen, use the shortcuts bar; if that is hidden too, Customize appears in the collection toolbar. F11 always exits full screen.
+The rewrite uses native window controls and native file pickers. It replaces the earlier drag-and-drop docking overlay with explicit placement controls. Arbitrary widgets, scripting, custom fonts, and 3D shelves are deferred.
 
-- Drag **Navigation**, **Game details**, or **Tools** onto a supported edge in the preview. The controls below it provide the same placements without dragging.
-- Navigation can sit on the left, right, or be hidden. Details can appear on the right, in a modal dialog, or be hidden. Tools can sit above or below it.
-- Choose **Grid**, **List**, or **Shelf**. Grid wraps portrait covers; List shows compact rows; Shelf is a horizontally scrolling row of cases. These are working views of the same library, not separate collections.
-- Adjust cover width and panel widths. Narrow windows cap side-panel widths to preserve space for the collection.
-- Edit the canvas, navigation, surface, text, secondary text, hairline, accent, and selection colors. Changes preview immediately across the shell, title bar, controls, and dialogs. Artwork retains its own colors.
-- Duplicate a layout, name it, and keep up to 32 named layouts. Switch them in the editor. **Save layouts** commits the workspace; **Cancel changes** restores the complete workspace from before the editor opened, including colors, selection, and any duplicates/deletions.
+`workspace.json` lives beside `library.json`; it contains no games, launch targets, or API keys. Rust validates names, placements, colors, and size ranges before atomic save. Damaged/newer workspaces produce a temporary default and warning; the existing file remains until an explicit save.
 
-This first editor supports docking existing components into defined regions. It is not yet a freeform widget canvas, arbitrary nesting system, user-script engine, or font/asset-package editor. Those require a component contract before adding more editor controls. None is implied by a saved layout in this version.
+`src/workspace.rs` owns the model. `frontend/components/Preferences.svelte` edits a draft; the shell renders that draft while the dialog is open. Library operations do not depend on panel placement.
 
-## Persistence and recovery
-
-`workspace.json` lives beside `library.json`, under the application’s local data folder. It contains a version, an active-layout index, and named layouts with presentation and skin settings. It never contains launch arguments, Steam API keys, or game entries. Library files retain their existing format.
-
-Saving validates layout names, positions, and supported size ranges, then atomically replaces the file. The UI can show a temporary default if the saved workspace is damaged or from a newer version; it preserves the existing file until the user explicitly saves a new workspace. Close the launcher and back up both JSON files before manual edits.
-
-## Window behavior
-
-The launcher draws a custom titlebar with window-drag regions; the toolbar keeps clear of the platform's traffic lights / caption buttons via chrome insets. File pickers remain native system dialogs when the deferred add/edit dialogs land. Windows docking, Snap behavior, high DPI, keyboard focus, and system-menu behavior need real Windows validation.
-
-## Developer boundaries
-
-`src/workspace.rs` defines and validates the saved model. Its visual editor overlay is deferred; the Rune shell in `src/shell.rs` reads the library directly. Keep game and integration operations independent of panel positions.
-
-To add a configurable component, define its supported docking behavior and persistent model, implement its renderer, wire it into the editor, and add restart/layout-bound tests. Keep game and integration operations independent of panel positions.
-
-## Native captures
-
-These captures use an isolated synthetic fixture library and an alternative user skin. They are actual Rust application windows under a Linux virtual display. The editor and renderer share the same saved model. The list/shelf fixtures do not represent games installed on a real user's machine.
-
-![Visual workspace editor](screenshots/workspace-editor.png)
-
-![User-arranged list with right-hand details and tools below](screenshots/workspace-list.png)
-
-![User-arranged shelf with hidden navigation](screenshots/workspace-shelf.png)
+Current browser captures use explicit synthetic fixtures. They show the actual Svelte screens, not a Windows-native runtime validation. See [the rewrite report](rewrite-report.md).

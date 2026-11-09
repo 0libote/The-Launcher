@@ -48,6 +48,27 @@ pub struct Game {
 }
 
 impl Game {
+    /// Stable entry handle for the frontend. Vector indices shift on
+    /// remove/reorder, so commands resolve games through this identity:
+    /// store-backed entries by their store key, executables by path.
+    /// Case follows the same rules as duplicate detection (ASCII-insensitive
+    /// on Windows for executables, store keys always).
+    pub fn handle(&self) -> String {
+        match &self.target {
+            Target::Steam { app_id } => format!("steam:{app_id}"),
+            Target::Epic { app_name, .. } => format!("epic:{}", app_name.to_ascii_lowercase()),
+            Target::Xbox { package_id } => format!("xbox:{}", package_id.to_ascii_lowercase()),
+            Target::Executable { path, .. } => {
+                let text = path.to_string_lossy();
+                if cfg!(windows) {
+                    format!("exe:{}", text.to_ascii_lowercase())
+                } else {
+                    format!("exe:{text}")
+                }
+            }
+        }
+    }
+
     pub fn source(&self) -> &'static str {
         match self.target {
             Target::Executable { .. } => "PC",
@@ -77,6 +98,12 @@ impl Default for Library {
     }
 }
 impl Library {
+    /// Resolve a stable [`Game::handle`] to its current index. Handles
+    /// survive removals and reordering; indices do not leave this function.
+    pub fn index_of(&self, handle: &str) -> Option<usize> {
+        self.games.iter().position(|game| game.handle() == handle)
+    }
+
     pub fn load(path: &Path) -> Result<Self> {
         let data = match fs::read(path) {
             Ok(data) => data,
@@ -92,10 +119,21 @@ impl Library {
                 library.schema_version
             );
         }
-        for game in &library.games {
-            validate_game(game)?;
-        }
+        library.validate()?;
         Ok(library)
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        let mut handles = std::collections::HashSet::new();
+        for game in &self.games {
+            validate_game(game)?;
+            if !handles.insert(game.handle()) {
+                bail!(
+                    "Library contains duplicate game entries; repair the file or restore a backup"
+                );
+            }
+        }
+        Ok(())
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
@@ -112,19 +150,17 @@ impl Library {
     }
 
     // Save first, then publish the new state to the UI.
-    pub fn change(
+    pub fn change<T>(
         &mut self,
         path: &Path,
-        edit: impl FnOnce(&mut Self) -> Result<()>,
-    ) -> Result<()> {
+        edit: impl FnOnce(&mut Self) -> Result<T>,
+    ) -> Result<T> {
         let mut next = self.clone();
-        edit(&mut next)?;
-        for game in &next.games {
-            validate_game(game)?;
-        }
+        let result = edit(&mut next)?;
+        next.validate()?;
         next.save(path)?;
         *self = next;
-        Ok(())
+        Ok(result)
     }
 
     pub fn add(&mut self, game: Game) -> Result<()> {
@@ -196,6 +232,20 @@ mod tests {
             hidden: false,
         }
     }
+    #[test]
+    fn duplicate_entries_on_disk_are_rejected_without_rewriting() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("library.json");
+        let broken = Library {
+            schema_version: 1,
+            games: vec![game(10), game(10)],
+        };
+        let bytes = serde_json::to_vec(&broken).unwrap();
+        fs::write(&path, &bytes).unwrap();
+        assert!(Library::load(&path).is_err());
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+    }
+
     #[test]
     fn round_trip_and_duplicate_protection() {
         let dir = tempfile::tempdir().unwrap();

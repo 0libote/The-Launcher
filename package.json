@@ -1,12 +1,37 @@
 {
   "name": "the-launcher",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
+  "type": "module",
   "packageManager": "bun@1.4.4",
   "scripts": {
-    "dev": "cargo run",
-    "build": "cargo build --release",
-    "test": "cargo test --all-targets",
-    "check": "bun run scripts/check.ts"
+    "dev": "tauri dev",
+    "dev:web": "vite --host 0.0.0.0 --port 1420 --strictPort",
+    "build": "tauri build --features custom-protocol",
+    "build:web": "vite build",
+    "check:web": "svelte-check --tsconfig ./tsconfig.json",
+    "test:web": "bun test frontend",
+    "test": "cargo test --lib",
+    "check": "bun run scripts/check.ts",
+    "tauri": "tauri",
+    "test:ui": "playwright test",
+    "benchmark": "bun run build:web && node scripts/performance.mjs",
+    "screenshots": "node scripts/capture.mjs"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.0.0",
+    "svelte": "^5.0.0"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
+    "@playwright/test": "^1.56.0",
+    "@sveltejs/vite-plugin-svelte": "^6.0.0",
+    "@tauri-apps/cli": "^2.0.0",
+    "@types/bun": "latest",
+    "prettier": "^3.9.10",
+    "prettier-plugin-svelte": "^4.1.1",
+    "svelte-check": "^4.0.0",
+    "typescript": "^5.0.0",
+    "vite": "^7.0.0"
   }
 }

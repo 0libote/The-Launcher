@@ -1,63 +1,47 @@
-# Development
+# Development and validation
 
-## Routine
+## Prerequisites
 
-Run `bun run dev` to start the native application, `bun run check` before a change is ready, and `bun run build` for a release executable. Cargo equivalents are `cargo run`, `cargo fmt --all -- --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --all-targets`, and `cargo build --release`.
+Use the Rust toolchain in `rust-toolchain.toml` and Bun version in `package.json`. Commit both `Cargo.lock` and `bun.lock` when dependencies change. Windows native development needs MSVC Build Tools (Desktop development with C++ and a Windows SDK) and WebView2. The Tauri CLI is a local development dependency.
 
-Use Rust 1.92+ and a current stable toolchain. Keep `Cargo.lock` committed. There are no Bun packages and no Bun lockfile. The Bun check script stops on the first failing Cargo command and preserves its exit code. Do not add a frontend framework just to get a command runner.
+For native Linux development, install the distribution equivalents of `build-essential`, `pkg-config`, `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`, and `patchelf`. Linux remains a development host rather than a supported release target. The current validation environment lacks these development libraries and has no sudo.
 
-## Tests and their limits
+## Commands
 
-Unit tests cover persistence round trips, duplicate prevention, failed-save rollback, corrupt/future schema handling, shell-free launch plans, Steam URI construction, and Steam manifest/library parsing. Tests use temporary directories; they do not execute games or need a real Steam account.
+```sh
+bun install --frozen-lockfile
+bun run dev                  # Vite plus native Tauri app
+bun run dev:web              # UI only; open /?demo for synthetic fixtures
+bun run check                # Svelte, frontend unit tests/build, Rust fmt/Clippy/tests
+bun run test:ui              # Browser workflows, accessibility and mocked desktop contract
+bun run build                # Native release + Windows NSIS installer on Windows
+```
 
-A compile or passing unit test does not prove a native window, graphics driver, file dialog, or Steam protocol handler works. Validate those on Windows before calling a build release-ready. There is no Windows CI or installer in the initial foundation.
+`cargo test --lib` and default Cargo checks need no GUI packages. The desktop binary requires `--features desktop`; release binaries also enable `custom-protocol` so assets are embedded rather than depending on Vite. `tauri.conf.json` enables it for Tauri CLI commands. Run `cargo clippy --features desktop --all-targets -- -D warnings` and `cargo test --features desktop --all-targets` on a machine with native prerequisites. Use `cargo build --features desktop,custom-protocol --release` for an executable without installer bundling.
+
+Browser tests use `CHROMIUM_PATH` or the system Chromium at `/usr/bin/chromium`; on other hosts set the environment variable to an installed Chromium executable. They launch an isolated test browser and reuse/start Vite. Install a supported Chromium browser before running them. They never use your real library. Mocked IPC tests verify frontend wiring, not native IPC execution.
+
+## Screenshots and benchmarks
+
+With the development server on port 1420, `bun run screenshots` writes fixture captures to `docs/screenshots/rewrite/`. Set `CHROMIUM_PATH` when needed.
+
+For production measurements, first run `bun run build:web`, then `bunx vite preview --host 127.0.0.1 --port 1421 --strictPort` in another terminal, then `node scripts/performance.mjs`. `BENCHMARK_URL` overrides the default URL. Results go to `docs/performance/rewrite.json`. The script samples 100/1,000/5,000 synthetic entries three times, includes fonts/navigation in ready time, measures search with automation overhead, and reports JS heap and renderer idle task time over five seconds after a one-second settling period. These are browser measurements, not total-process memory, GPU usage, or Windows startup benchmarks. The demo caps fixture generation at 10,000 entries.
+
+## Windows CI
+
+`.github/workflows/windows.yml` runs core/frontend checks, native desktop Clippy/tests, and a full MSVC/NSIS build. It uploads an unsigned installer artifact with seven-day retention; it does not publish a release. Actions are pinned to verified release commits, with Dependabot checking the pins monthly. The workflow still needs its first hosted run; local GNU cross-checks do not prove MSVC packaging.
 
 ## Windows smoke test
 
-1. Start with a new library. Check the empty shelf, keyboard focus, minimum window size, DPI scaling at 100% and 150%, and F11 entry/exit.
-2. Add a trusted executable in a path containing spaces. Confirm its working directory and separate arguments. Cancel an add and verify no entry is created.
-3. Restart and check persistence. Edit arguments, favorite, search, filter by source, and verify Play launches the selected visible game. Check Tab, arrow keys, Enter, and double click.
-4. Add the same executable again. Check duplicate feedback. Move the executable and check that Play reports its missing path without deleting the entry.
-5. Import a Steam installation with multiple libraries. Check count, names, already-imported entries, a disconnected drive, and launching through Steam. Repeat import to confirm no duplicates.
-6. Remove an entry and confirm its game files remain untouched. Run a second launcher instance and verify the instance warning.
-7. Close the launcher, back up its JSON, damage a copy at the real path, and verify startup refuses to overwrite it. Restore the backup. Test a read-only data folder and recovery after a save error.
-8. Check Windows screen-reader behavior, contrast, and text clipping with long names. Do not claim full accessibility or controller support based on keyboard-only testing.
-
-## Extending the app
-
-- New source: add a typed launch target if required, discovery code outside the UI, focused fixture tests, and a documented data migration if the serialized model changes.
-- New UI feature: preserve keyboard focus and text-input shortcuts; show errors where the user can act on them.
-- Data changes: prefer backward-compatible defaulted fields. Bump schema version for incompatible formats and implement explicit migrations before loading them.
-- Documentation: update README for current behavior, architecture for consequential decisions, roadmap for remaining work, and the data reference for serialized fields.
+1. Back up existing data. Start the rewrite with a schema-1 library and workspace; confirm names, favorites, hidden flags, artwork and layouts survive. Confirm corrupt/future libraries show an error without resetting files. Try a second instance.
+2. Check empty state, search, all views, installed/source/favorite filters, tags, long titles, and 100%/150%/200% DPI. Resize/move/maximize/Snap across monitors. Check dialog clipping at the minimum window size.
+3. Add a trusted `.exe` in a Unicode path containing spaces. Validate separate arguments and working directory, edit/save/restart, and reject duplicates. Move the executable and confirm launch fails without removing it.
+4. Import real Steam (multiple drives, offline drive, account-owned games), Epic manifests, and Xbox packages. Check warnings, case variants, preservation, and real client dispatch. Known-uninstalled Steam entries install without getting a played timestamp.
+5. Match a non-Steam title, fetch information, choose local/provider artwork, inspect sources/background/logo, replace explicitly, stop a queue, and simulate offline/rate limits. Check that edits during requests survive.
+6. Preview/save/cancel skins and named layouts, including hidden navigation and right details. Check keyboard focus, Escape, slash/Ctrl+K, Tab, arrow rows, and controller reconnect/confirm/back. Test with a real screen reader.
+7. Export/restore a backup. Try damaged and future versions, write failures, and an export destination matching the live library. Keep a separate copy: backups contain references, not game/artwork binaries. Restore stages files and attempts rollback on IO failure; it is not a power-loss-proof multi-file transaction.
+8. Install/uninstall the unsigned NSIS build on a clean Windows machine. Verify WebView2 handling, app-data preservation, startup and recovery messages, and executable dispatch. Installer signing/updating and distribution license remain release work.
 
 ## Commit identity
 
 Always commit as `0libote <79215282+0libote@users.noreply.github.com>`. Check both Git config fields before the first commit in a fresh environment and stop if either differs. Never commit as T3 Code or `t3@t3code.local`.
-
-## Foundation validation record
-
-The initial implementation passed formatting, Clippy with warnings denied, and 13 unit tests on Linux with Rust 1.98.1 / Bun 1.4.4. `cargo build` succeeded, as did `cargo check --target x86_64-pc-windows-gnu --all-targets`. A native window rendered under Xvfb; an isolated fixture library loaded, Play dispatched `/usr/bin/true`, and Favorite plus the launch timestamp were persisted. The empty state, populated shelf, and add dialog were visually inspected. No real user library was modified.
-
-This does not validate the MSVC release build, Windows file picker, `.exe` execution on Windows, real Steam protocol dispatch, or screen-reader behavior. Complete the Windows checklist before distributing a release.
-
-## Visual polish validation record
-
-The visual redesign passed `bun run check` (formatting, Clippy with warnings denied, 20 tests), `cargo build`, and Windows GNU target compilation for all targets. New tests cover small-text contrast, local cover decoding/resizing, center-cropping, old-library compatibility and cover persistence, combined filters, arrow-row navigation and modal isolation, and layout bounds at 840×600, 1200×800, and 1600×1000.
-
-Native Xvfb captures covered the empty and populated library, a local image alongside generated covers, and the add dialog at minimum size. A smoke test dispatched `/usr/bin/true` through Play, toggled Favorite, and checked that launch time/favorite changes preserved the cover reference in JSON. Escape closed the add dialog. Test libraries and images lived under `/tmp`, separate from user data. See `docs/design.md` for captures and fixture labeling. Windows runtime, MSVC packaging, high DPI, screen readers, real Steam launches, and native cover-file picking remain Windows smoke-test work.
-
-## User workspace and Steam-reference validation
-
-The user-owned shell/Steam change passed formatting, Clippy with warnings denied, 34 tests, `cargo build`, and `cargo check --target x86_64-pc-windows-gnu --all-targets`. Tests cover workspace persistence/validation, skin application to widgets and custom painting, all three views with alternate panel placements at 840×600 and 1200×800, and Cancel restoring the pre-edit workspace. Steam fixtures cover the Playnite-reference behaviors: multi-library scans, malformed-file warnings, fallback names, redistributable exclusion, owned-result parsing/deduplication, installed-state merging, and install-vs-launch URI selection. UI merge tests preserve custom titles, favorites, covers, and known installed state on partial scans.
-
-Native Xvfb mouse testing dragged Navigation onto the right edge, saved it, and checked the resulting JSON. Native restarts rendered persisted list and shelf layouts with another skin and moved/hidden panels. The compact right-details pane keeps Play and Options outside the scrolling metadata. Captures are linked from `customization.md`. Test data and files stayed under `/tmp`; no real account credential was used.
-
-Still required on Windows: registry discovery against a real Steam client, `.exe` and `steam.exe -silent` dispatch, account API calls with a real consenting account, drag-to-Snap behavior, resize/minimize/maximize/Alt+F4, multiple monitors/DPI, and accessibility. The Win11 hover Snap-layout flyout is not implemented by the custom maximize button. Steam embedded-browser login, family sharing, and install/run-state watchers are not implemented; see the explicit parity table in `steam-integration.md`.
-
-## Metadata validation
-
-The built-in provider slice passes `bun run check` (formatting, Clippy with warnings denied, 46 tests) and Windows GNU target compilation. New fixtures cover exact Steam identity matching, malformed store/search/artwork responses, image host/format/dimension limits, bounded HTTP errors without credential leakage, settings corruption/round trips, field-level preservation during replacement, old-library compatibility, and late results after edits/removal or a switch to another game. Native UI tests exercise the metadata modal at 840×600 and 1200×800 and prevent library arrow shortcuts while it is open. Unit tests do not contact external services; the HTTP response test uses a loopback fixture server.
-
-A separate live smoke query searched Steam for Portal 2 (app 620), fetched its description/developer/genres, and downloaded/decoded its cover, hero, and logo successfully with no account credentials. Its files stayed under `/tmp`; no real library was changed and no downloaded game artwork is bundled with the application. Native Xvfb captures inspected the source settings at 840×600 and 1200×800 and the individual-game information/artwork panel. The native artwork browser downloaded and previewed both official portrait variants; selecting one persisted the cache path and source without changing the launch target.
-
-Before release, repeat the flow on Windows: enable/disable automatic download, import a real Steam library, match an executable without changing its launch target, choose an alternate image, restart to verify defaults/metadata/cache persistence, stop a queue, and simulate offline/rate-limited providers. Validate SteamGridDB with a consenting user's API key, including a bad key and Steam fallback. Live SteamGridDB authentication, Windows runtime networking/window behavior, non-Steam catalogues, cache eviction, and MSVC packaging remain unverified or unimplemented; see [metadata limits](metadata.md).

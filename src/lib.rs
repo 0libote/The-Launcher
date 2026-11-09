@@ -1,3 +1,4 @@
+pub mod desktop;
 pub mod epic;
 pub mod launch;
 pub mod library;

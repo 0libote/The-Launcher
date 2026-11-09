@@ -1,41 +1,33 @@
 # Roadmap
 
-This is a direction, not a release promise. Finish and validate each slice before adding the next integration.
+The direction is a polished, lightweight personal game shelf for PC, retro, and physical collections. Finish and validate each slice before broadening integrations.
 
-## Foundation — implemented, Windows validation remains
+## Desktop rewrite
 
-Native Rust library UI; manual executable entries and launch options; safe direct process launching; local persistence; favorites and search; source filters; installed Steam/Epic/Xbox imports and protocol-handler launching; setup, architecture, and data documentation.
+Tauri 2 shell; Svelte/TypeScript grid, list and shelf views; retained Rust launching/import/metadata/persistence services; responsive game details; keyboard/controller browsing; user-owned appearance; backup/restore; browser fixture mode. Validate native Windows behavior before calling the rewrite release-ready. See `rewrite-report.md` for evidence and outstanding checks.
 
-## User-owned presentation — implemented foundation
+## Next: make the desktop dependable
 
-Visual layout editor with panel docking, grid/list/shelf views, sizes, colors, named layouts, atomic Save/Cancel, and a launcher-owned frame. See `customization.md` for the supported regions and current limits.
+- Complete Windows MSVC build, native dialogs, real store dispatch, controller, DPI, multi-monitor and screen-reader checks.
+- Choose a distribution license, installer/signing/update strategy and release process.
+- Remember window state and library browsing preferences; improve import previews and refresh/install state without deleting custom entries.
+- Add catalogue coverage outside Steam, provider credential storage through the OS, artwork cache quotas and cleanup.
 
-Steam now follows the registry/manifests plus optional Web API account-import approach examined in Playnite. Epic follows the local `.item` manifests approach; Xbox follows the installed UWP packages approach. Browser/account logins, family sharing, console catalogs, playtime sync, and session/install watchers remain future work.
+## Then: retro and ownership
 
-## Next: make it pleasant to use daily
+- Separate stable catalogue identity, owned copies and device-specific launch options, with explicit migrations and backups.
+- Allow non-launchable entries for physical games and owned but uninstalled copies.
+- Add platforms, ROM scanning with import previews, and profiles for installed external emulators.
+- Expand collections around platform, edition, format and collection status.
 
-- Validate on Windows hardware and add Windows CI, including an actual release build.
-- Implemented: custom local cover art, title-based fallback art, bounded texture cache, bundled typography, and the redesigned native library. Validate these on Windows hardware.
-- Implemented: up/down grid navigation and scroll-to-selection. Continue Windows keyboard/accessibility and DPI validation.
-- Implemented: controller navigation (d-pad/stick with auto-repeat, South/Start confirm, East back, disconnect recovery; evdev on Linux, XInput on Windows). An intentional big-screen mode remains future work; validate controllers on Windows hardware.
-- Remember window state, shelf selection, sorting, and user-selected Steam roots.
-- Import previews and per-file warnings; refresh/uninstalled handling that never silently removes custom entries.
-- Timestamp display, recent sorting, and backup/restore UI.
+## Later: self-hosted companion
 
-## Then: deepen the shelf
+Reuse the responsive UI with a Docker-hosted API and persistent data volume. Start with read-only desktop-published collection browsing on phones. Define authentication, access boundaries and a portable asset model before exposing private libraries. Introduce editing and conflict-aware synchronization only after the read-only workflow works. Standalone desktop use remains offline.
 
-Explore 3D cases or a spatial shelf, optional sound and motion with off switches, richer metadata-driven collections (using the new features/tags/scores fields), and expanded built-in providers. Prototype the interaction and performance before committing the entire UI to a 3D renderer. Preserve a usable low-motion path.
+## Last: remote play
 
-## Later: broaden the library
+Evaluate browser emulation (server supplies files, client runs the emulator) separately from server-side game streaming. Integrate existing emulation/streaming systems rather than build a streaming engine. Device compatibility, storage access and saves need their own validation.
 
-Consider emulators and ROM launch profiles, GOG/itch.io scans, portable mode, robust play-session tracking, and an extension model only after multiple real integrations expose a repeated boundary. Online accounts, cloud sync, remote play, achievements, and a plugin marketplace are not foundation requirements.
+## Deferred
 
-## Release gates
-
-Choose a project license. Test Windows graphics drivers, DPI, accessibility, native dialogs, Unicode paths, Steam across multiple drives, and update/recovery behavior. Decide packaging and signing. Publish known limitations and backup instructions alongside a reproducible build process before inviting users to entrust a large library to the launcher.
-
-## Built-in metadata foundation (implemented)
-
-Steam descriptions/credits/genres/features/links/age ratings/critic scores/release dates, automatic fill after import or confirmed matching (Steam, Epic, Xbox, and executables via Steam matching), official cover/background/logo downloads, optional SteamGridDB artwork preference with Steam fallback, individual image previews/selections, source attribution, offline PNG cache, manual-only tags/series, and preservation-aware background results. See [metadata](metadata.md) for current limits.
-
-Next metadata work: another real catalogue for games outside Steam (evaluate IGDB authentication/licensing), per-field provider priorities, manual text editing and metadata-driven filters, non-Steam artwork identities, credential storage through the OS, cache quotas/cleanup, and icons/screenshots. Dynamic extensions should follow working provider contracts rather than become a prerequisite for everyday metadata.
+3D/spatial shelves, an unrestricted drag-and-drop layout editor, dynamic plugin marketplace, achievements, complex account integrations and custom streaming infrastructure. Retain practical appearance settings and a usable low-motion path.
