@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import {
   defaultSettings,
   defaultWorkspace,
@@ -220,6 +221,24 @@ export async function command<T = unknown>(
       throw new Error(`Unknown desktop action: ${name}`);
   }
   return result as T;
+}
+export type WindowAction = 'minimize' | 'toggleMaximize' | 'close';
+/** Frameless window controls. No-ops outside the desktop app. */
+export async function windowAction(action: WindowAction): Promise<void> {
+  if (!desktop) return;
+  const win = getCurrentWindow();
+  if (action === 'minimize') await win.minimize();
+  else if (action === 'toggleMaximize') await win.toggleMaximize();
+  else await win.close();
+}
+export async function windowMaximized(): Promise<boolean> {
+  if (!desktop) return false;
+  return getCurrentWindow().isMaximized();
+}
+/** Resolves to a no-op unlisten function outside the desktop app. */
+export function onWindowResized(handler: () => void): Promise<() => void> {
+  if (!desktop) return Promise.resolve(() => {});
+  return getCurrentWindow().onResized(handler);
 }
 export function demoSnapshot(): Snapshot {
   let library: Library = {

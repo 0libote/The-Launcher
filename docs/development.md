@@ -32,7 +32,11 @@ Shared pieces live in `frontend/components/ui/` (`Button` with
 `primary`/`secondary`/`ghost`/`danger`/`icon` variants) with `cn()` in
 `frontend/lib/utils.ts` for class merging. Dialogs use `bits-ui` Dialog with
 the same modal contract; keep the `Modal` props stable and put new generic
-controls in `ui/` rather than hand-rolled CSS.
+controls in `ui/` rather than hand-rolled CSS. The overlay sits above the
+sticky topbar. The desktop window is frameless (`decorations: false` in
+`tauri.conf.json`) with its own themed `Titlebar.svelte` (Tauri-only drag
+region plus minimize/maximize/close through `lib/api.ts`); the browser demo
+hides it.
 
 ## Screenshots and benchmarks
 

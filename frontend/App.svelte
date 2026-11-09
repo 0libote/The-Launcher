@@ -8,6 +8,7 @@
   import GameDetails from './components/GameDetails.svelte';
   import ArtworkChoice from './components/ArtworkChoice.svelte';
   import Preferences from './components/Preferences.svelte';
+  import Titlebar from './components/Titlebar.svelte';
   import {
     command,
     demo,
@@ -658,6 +659,7 @@
   class="app-shell"
   class:nav-right={active.layout.navigation === 'right'}
   class:nav-hidden={active.layout.navigation === 'hidden'}
+  class:has-titlebar={desktop}
   style={`${tokens};--tile-width:${active.layout.tile_width}px;--nav-width:${active.layout.navigation_width}px;--details-width:${active.layout.details_width}px`}
 >
   <a class="skip-link" href="#library">Skip to library</a>
@@ -722,6 +724,11 @@
     </div>
   </aside>
   <div class="main-shell">
+    {#if desktop}<Titlebar
+        title={collection === 'All games'
+          ? 'The Launcher'
+          : `The Launcher — ${collection}`}
+      />{/if}
     <header class="topbar">
       <Button
         variant="icon"
