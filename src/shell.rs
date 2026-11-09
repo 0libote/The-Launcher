@@ -272,12 +272,15 @@ pub struct Shell {
     workspace_snapshot: Option<Workspace>,
     ws_name: TextEdit,
     covers: HashMap<PathBuf, Pixels>,
+    /// Background cover decodes for startup. Worker threads decode files to
+    /// UI-ready bytes; [`poll`] inserts them without blocking the frame.
+    cover_rx: Option<mpsc::Receiver<(PathBuf, metadata::UiThumbnail)>>,
     meta: MetaPanel,
 }
 
 /// Metadata & artwork overlay: settings, title matching, downloads, and
-/// artwork choice. Network work runs on worker threads; the UI thread merges
-/// [`MetaEvent`]s in [`poll`].
+/// artwork choice. Network and image work runs on worker threads; the UI
+/// thread only merges results and inserts pre-decoded pixels.
 struct MetaPanel {
     open: bool,
     target: Option<Target>,
@@ -299,6 +302,10 @@ struct MetaPanel {
     completed: usize,
     failed: usize,
     total: usize,
+    /// In-memory merges not yet flushed to disk. Flushed every few games and
+    /// on Done/stop so bulk fetches do one save per batch instead of one per
+    /// game, keeping frames responsive.
+    unsaved: usize,
     busy: bool,
     cancel: Arc<AtomicBool>,
     rx: Option<mpsc::Receiver<MetaEvent>>,
@@ -308,6 +315,9 @@ struct ImagePreview {
     label: String,
     source: String,
     path: Result<PathBuf, String>,
+    /// UI-ready thumbnail decoded on the worker thread. `None` for failed
+    /// downloads and for headless fixtures; the UI never decodes here.
+    preview: Option<metadata::UiThumbnail>,
 }
 
 enum MetaEvent {
@@ -342,6 +352,7 @@ impl MetaPanel {
             completed: 0,
             failed: 0,
             total: 0,
+            unsaved: 0,
             busy: false,
             cancel: Arc::new(AtomicBool::new(false)),
             rx: None,
@@ -530,6 +541,7 @@ impl Shell {
             workspace_snapshot: None,
             ws_name: TextEdit::new(""),
             covers: HashMap::new(),
+            cover_rx: None,
             meta: MetaPanel::closed(),
         }
     }
@@ -565,14 +577,16 @@ impl Shell {
         }
         shell.meta.settings_path = meta_path;
         shell.meta.cache = shell.path.with_file_name("artwork");
-        shell.decode_covers();
+        shell.decode_covers_async();
         shell.selected = shell.visible().into_iter().next();
         shell
     }
 
-    /// Decode every referenced cover once, bounded like the old texture
-    /// cache, so cards and details paint images without UI-thread stalls.
-    fn decode_covers(&mut self) {
+    /// Queue referenced covers for background decoding (bounded to 64).
+    /// Workers decode files to UI-ready bytes; [`poll`] inserts them without
+    /// blocking the frame, so startup and bulk imports stay responsive.
+    /// Cards show gradient art until their decode arrives.
+    fn decode_covers_async(&mut self) {
         let mut seen = std::collections::HashSet::new();
         let paths: Vec<PathBuf> = self
             .library
@@ -582,11 +596,28 @@ impl Shell {
             .filter(|path| seen.insert(path.clone()))
             .take(64)
             .collect();
-        for path in paths {
-            if let Ok(pixels) = decode_cover(&path) {
-                self.covers.insert(path, pixels);
-            }
+        if paths.is_empty() {
+            return;
         }
+        let (tx, rx) = mpsc::channel();
+        self.cover_rx = Some(rx);
+        std::thread::spawn(move || {
+            for path in paths {
+                if let Ok(thumb) = metadata::ui_thumbnail_from_file(&path)
+                    && tx.send((path, thumb)).is_err()
+                {
+                    break;
+                }
+            }
+        });
+    }
+
+    /// Insert pre-decoded thumbnail bytes without image decoding on the UI
+    /// thread. Keeps per-fetch frame work to a small memcpy.
+    fn insert_preview(&mut self, path: PathBuf, thumb: &metadata::UiThumbnail) {
+        let pixels = Pixels::new();
+        pixels.set(thumb.width, thumb.height, thumb.rgba.clone());
+        self.cache_cover(path, pixels);
     }
 
     fn remember_cover(&mut self, path: &Path) {
@@ -1291,7 +1322,9 @@ impl Shell {
     }
 
     /// Fetch enabled fields for games with a known Steam identity, one at a
-    /// time with a pause between requests. Rate-limit responses stop the queue.
+    /// time with a short pause between requests. Rate-limit responses stop
+    /// the queue. Image decoding happens here on the worker; the UI thread
+    /// only merges results and inserts pre-decoded pixels.
     fn begin_fetch(&mut self, games: Vec<Game>, replace: bool) {
         let settings = self.meta.settings.clone();
         let games: Vec<_> = games
@@ -1311,6 +1344,7 @@ impl Shell {
             return;
         };
         self.meta.total = total;
+        self.meta.unsaved = 0;
         let cache = self.meta.cache.clone();
         let key = self.meta.key.text.clone();
         let cancel = self.meta.cancel.clone();
@@ -1320,7 +1354,7 @@ impl Shell {
                 if cancel.load(Ordering::Relaxed) {
                     break;
                 }
-                let result = match &provider {
+                let mut result = match &provider {
                     Ok(provider) => provider
                         .fetch(
                             metadata::app_id(&game).unwrap_or(0),
@@ -1331,6 +1365,16 @@ impl Shell {
                         .map_err(|error| format!("{error:#}")),
                     Err(error) => Err(format!("{error:#}")),
                 };
+                // Decode the cover thumbnail here so the UI thread never
+                // blocks on image decoding. Failures keep gradient art.
+                if let Ok(fetched) = result.as_mut()
+                    && let Some(path) = fetched.cover.clone()
+                {
+                    match metadata::ui_thumbnail_from_file(&path) {
+                        Ok(thumb) => fetched.cover_preview = Some(thumb),
+                        Err(_) => fetched.cover_preview = None,
+                    }
+                }
                 let rate_limited = match &result {
                     Ok(fetched) => fetched.warnings.iter().any(|w| w.contains("rate limit")),
                     Err(error) => error.contains("rate limit"),
@@ -1351,7 +1395,9 @@ impl Shell {
                 if rate_limited {
                     break;
                 }
-                std::thread::sleep(Duration::from_secs(2));
+                // Short politeness gap; 429 responses stop the queue above.
+                // Previously 2s, which made large libraries take many minutes.
+                std::thread::sleep(Duration::from_millis(500));
             }
             let _ = tx.send(MetaEvent::Done);
         });
@@ -1390,13 +1436,20 @@ impl Shell {
                         if cancel.load(Ordering::Relaxed) {
                             break;
                         }
-                        let path = client
+                        let downloaded = client
                             .download(&choice, &cache)
                             .map_err(|error| format!("{error:#}"));
+                        // Decode thumbnails here so the UI thread inserts
+                        // bytes without image decoding hitches.
+                        let preview = match &downloaded {
+                            Ok(path) => metadata::ui_thumbnail_from_file(path).ok(),
+                            Err(_) => None,
+                        };
                         previews.push(ImagePreview {
                             label: choice.label,
                             source: choice.source,
-                            path,
+                            path: downloaded,
+                            preview,
                         });
                     }
                     Ok(previews)
@@ -1412,6 +1465,8 @@ impl Shell {
         self.meta.status =
             "Stopping when the in-flight game finishes. Its unsaved result will be discarded."
                 .into();
+        // Flush already merged results so stopping keeps completed games.
+        self.flush_metadata();
     }
 
     /// Record a matched Steam identity on the selected game without touching
@@ -1513,6 +1568,9 @@ impl Shell {
     }
 
     /// Merge one finished fetch, preserving fields edited while it ran.
+    /// Merges in memory immediately (cheap) and flushes to disk in batches
+    /// so bulk fetches do one save per few games instead of one per game.
+    /// Inserts the worker-decoded cover thumbnail without image decoding.
     fn finish_fetched(&mut self, baseline: Game, result: Result<Fetched, String>, replace: bool) {
         self.meta.completed += 1;
         match result {
@@ -1523,36 +1581,45 @@ impl Shell {
             Ok(fetched) => {
                 let warnings = fetched.warnings.join(" ");
                 let cover = fetched.cover.clone();
-                let done = self.persist_fetched(&baseline, fetched, replace);
-                if let Err(error) = done {
-                    self.meta.failed += 1;
-                    self.meta.status = format!("Could not save metadata: {error:#}");
-                } else {
-                    if let Some(path) = cover
-                        && path.is_file()
-                    {
-                        self.remember_cover(&path);
-                    }
-                    if !warnings.is_empty() {
-                        self.meta.status = format!("{}: {warnings}", baseline.name);
-                    }
+                let preview = fetched.cover_preview.clone();
+                merge_fetched(&mut self.library, &baseline, fetched, replace);
+                self.meta.unsaved += 1;
+                if let (Some(path), Some(thumb)) = (cover, preview) {
+                    // Worker already decoded; UI only does a small memcpy.
+                    // No is_file check: preview bytes are authoritative even
+                    // if the file vanished between fetch and merge.
+                    self.insert_preview(path, &thumb);
+                }
+                if !warnings.is_empty() {
+                    self.meta.status = format!("{}: {warnings}", baseline.name);
+                }
+                // Batch disk writes: one fsync per few games, plus a final
+                // flush on Done/stop, instead of one fsync per game on the UI
+                // thread. Keeps the shelf responsive during large imports.
+                if self.meta.unsaved >= 5 {
+                    self.flush_metadata();
                 }
             }
         }
     }
 
-    fn persist_fetched(&mut self, baseline: &Game, fetched: Fetched, replace: bool) -> Result<()> {
+    /// Persist in-memory metadata merges to disk (batched). Headless/test
+    /// shells with no path only track the count.
+    fn flush_metadata(&mut self) {
+        if self.meta.unsaved == 0 {
+            return;
+        }
         if self.path.as_os_str().is_empty() {
-            let mut next = self.library.clone();
-            merge_fetched(&mut next, baseline, fetched, replace);
-            self.library = next;
-            Ok(())
-        } else {
-            let path = self.path.clone();
-            self.library.change(&path, |library| {
-                merge_fetched(library, baseline, fetched, replace);
-                Ok(())
-            })
+            self.meta.unsaved = 0;
+            return;
+        }
+        let path = self.path.clone();
+        match self.library.save(&path) {
+            Ok(()) => self.meta.unsaved = 0,
+            Err(error) => {
+                self.meta.failed += 1;
+                self.meta.status = format!("Could not save metadata: {error:#}");
+            }
         }
     }
 
@@ -1616,14 +1683,15 @@ impl Shell {
         }
         match result {
             Ok(images) => {
-                // Decode thumbnails into the panel-scoped map, replacing any
-                // previous browse. Applied choices graduate to the covers
-                // cache; the rest die with the panel.
+                // Insert worker-decoded thumbnails into the panel-scoped map,
+                // replacing any previous browse. Applied choices graduate to
+                // the covers cache; the rest die with the panel. No image
+                // decoding happens here, so browsing stays responsive.
                 self.meta.previews.clear();
                 for preview in &images {
-                    if let Ok(path) = &preview.path
-                        && let Ok(pixels) = decode_cover(path)
-                    {
+                    if let (Ok(path), Some(thumb)) = (&preview.path, &preview.preview) {
+                        let pixels = Pixels::new();
+                        pixels.set(thumb.width, thumb.height, thumb.rgba.clone());
                         self.meta.previews.insert(path.clone(), pixels);
                     }
                 }
@@ -1642,6 +1710,16 @@ fn merge_fetched(library: &mut Library, baseline: &Game, fetched: Fetched, repla
         game.target == baseline.target && metadata::app_id(game) == metadata::app_id(baseline)
     }) {
         metadata::apply(game, baseline, fetched, replace);
+    }
+}
+
+/// Flush batched metadata on abrupt close so completed games are not lost.
+/// Failures are ignored here; the next run re-fetches missing fields.
+impl Drop for Shell {
+    fn drop(&mut self) {
+        if self.meta.unsaved > 0 && !self.path.as_os_str().is_empty() {
+            let _ = self.library.save(&self.path);
+        }
     }
 }
 
@@ -2039,11 +2117,13 @@ pub fn spec() -> AppSpec<Shell> {
                         label: "Official cover".into(),
                         source: "Steam".into(),
                         path: Ok(cover),
+                        preview: None,
                     },
                     ImagePreview {
                         label: "Alternate art".into(),
                         source: "Steam".into(),
                         path: Err("Provider denied access".into()),
+                        preview: None,
                     },
                 ];
                 s.meta.status = "Choose an image to replace that artwork field.".into();
@@ -2153,11 +2233,20 @@ fn poll(s: &mut Shell, _now: f64, tx: &mut Tx) -> bool {
         }
     }
     if s.meta.busy {
+        // Bound per-frame metadata work so a burst of completions cannot
+        // hitch the shelf: at most a few cheap in-memory merges plus small
+        // pixel memcpy inserts per frame. Remaining results wait in the
+        // channel for the next frame.
+        let mut fetched_this_frame = 0;
         loop {
             match s.meta.rx.as_ref().map(mpsc::Receiver::try_recv) {
                 Some(Ok(MetaEvent::Fetched(baseline, result, replace))) => {
                     s.finish_fetched(*baseline, *result, replace);
                     changed = true;
+                    fetched_this_frame += 1;
+                    if fetched_this_frame >= 4 {
+                        break;
+                    }
                 }
                 Some(Ok(MetaEvent::Matches(target, query, result))) => {
                     s.finish_matches(target, query, result);
@@ -2170,6 +2259,9 @@ fn poll(s: &mut Shell, _now: f64, tx: &mut Tx) -> bool {
                 Some(Ok(MetaEvent::Done)) => {
                     s.meta.rx = None;
                     s.meta.busy = false;
+                    // Final flush so batched saves always land at the end of
+                    // a queue, even when the batch size was not reached.
+                    s.flush_metadata();
                     if s.meta.total > 0 {
                         s.meta.status = format!(
                             "Processed {} of {} games ({} failed). {} {}",
@@ -2190,6 +2282,7 @@ fn poll(s: &mut Shell, _now: f64, tx: &mut Tx) -> bool {
                 Some(Err(mpsc::TryRecvError::Disconnected)) => {
                     s.meta.rx = None;
                     s.meta.busy = false;
+                    s.flush_metadata();
                     s.meta.status = "Metadata worker stopped unexpectedly; try again.".into();
                     changed = true;
                     break;
@@ -2198,6 +2291,29 @@ fn poll(s: &mut Shell, _now: f64, tx: &mut Tx) -> bool {
             }
         }
         if s.meta.busy {
+            tx.wake_after(Duration::from_millis(200));
+        }
+    }
+    // Background cover decodes (startup): insert a few per frame without
+    // image decoding. Cards show gradient art until their decode arrives.
+    if s.cover_rx.is_some() {
+        let rx = s.cover_rx.take().expect("cover channel present");
+        let mut alive = true;
+        for _ in 0..4 {
+            match rx.try_recv() {
+                Ok((path, thumb)) => {
+                    s.insert_preview(path, &thumb);
+                    changed = true;
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    alive = false;
+                    break;
+                }
+            }
+        }
+        if alive {
+            s.cover_rx = Some(rx);
             tx.wake_after(Duration::from_millis(200));
         }
     }
@@ -5199,7 +5315,7 @@ mod tests {
 
     #[test]
     fn filtering_combines_collection_and_search() {
-        let library = Shell::demo().library;
+        let library = Shell::demo().library.clone();
         assert_eq!(visible_indices(&library, Filter::All, "").len(), 8);
         assert_eq!(visible_indices(&library, Filter::Favorites, "").len(), 2);
         assert_eq!(visible_indices(&library, Filter::Pc, "").len(), 4);
@@ -5529,7 +5645,7 @@ mod tests {
 
     #[test]
     fn steam_merge_adds_new_and_refreshes_installed() {
-        let mut library = Shell::demo().library;
+        let mut library = Shell::demo().library.clone();
         let imported = steam::ImportResult {
             games: vec![
                 steam::SteamGame {
@@ -5576,7 +5692,7 @@ mod tests {
             warnings: vec!["a manifest broke".into()],
             ..imported
         };
-        let mut library = Shell::demo().library;
+        let mut library = Shell::demo().library.clone();
         merge_import(&mut library, &warned).unwrap();
         let starfall = library
             .games
@@ -5630,7 +5746,7 @@ mod tests {
 
     #[test]
     fn epic_merge_adds_new_and_preserves_custom_names() {
-        let mut library = Shell::demo().library;
+        let mut library = Shell::demo().library.clone();
         let imported = epic::ImportResult {
             games: vec![
                 epic::EpicGame {
@@ -5666,7 +5782,7 @@ mod tests {
 
     #[test]
     fn xbox_merge_adds_new_and_freezes_flags_on_warnings() {
-        let mut library = Shell::demo().library;
+        let mut library = Shell::demo().library.clone();
         let imported = xbox::ImportResult {
             games: vec![xbox::XboxGame {
                 package_id: "Fresh_abc!App".into(),
@@ -5682,7 +5798,7 @@ mod tests {
             games: vec![],
             warnings: vec!["unreadable package skipped".into()],
         };
-        let mut library = Shell::demo().library;
+        let mut library = Shell::demo().library.clone();
         merge_xbox_import(&mut library, &warned).unwrap();
         let pixel = library
             .games
@@ -5937,6 +6053,7 @@ mod tests {
                     label: "Official cover".into(),
                     source: "Steam".into(),
                     path: Ok(art.clone()),
+                    preview: None,
                 }]),
             );
         });
@@ -5969,6 +6086,150 @@ mod tests {
         let game = &rt.state.library.games[1];
         assert_eq!(game.metadata.description, "My notes", "in-flight edits win");
         assert_eq!(game.metadata.genres, vec!["Tactics".to_string()]);
+    }
+
+    #[test]
+    fn fetched_cover_preview_inserts_without_file_or_decode() {
+        // Worker-decoded bytes are inserted directly; the UI never touches
+        // the disk or image decoder here, so missing files still show the
+        // fetched art instead of hitching then falling back.
+        let mut shell = Shell::demo();
+        let baseline = shell.library.games[1].clone();
+        let missing = PathBuf::from("/definitely/missing/cover.png");
+        let thumb = metadata::UiThumbnail {
+            width: 2,
+            height: 2,
+            rgba: vec![
+                255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
+            ],
+        };
+        let fetched = Fetched {
+            metadata: metadata::GameMetadata {
+                genres: vec!["Tactics".into()],
+                sources: std::collections::BTreeMap::from([("genres".into(), "Steam".into())]),
+                ..Default::default()
+            },
+            cover: Some(missing.clone()),
+            cover_preview: Some(thumb),
+            warnings: Vec::new(),
+        };
+        shell.finish_fetched(baseline, Ok(fetched), false);
+        assert_eq!(
+            shell.library.games[1].metadata.genres,
+            vec!["Tactics".to_string()]
+        );
+        assert_eq!(shell.library.games[1].cover, Some(missing.clone()));
+        assert!(
+            shell.covers.contains_key(&missing),
+            "preview bytes inserted without decoding"
+        );
+        assert_eq!(shell.meta.unsaved, 1);
+    }
+
+    #[test]
+    fn metadata_saves_are_batched_not_per_game() {
+        // Five in-memory merges trigger one disk write, not five. Fewer
+        // fsyncs on the UI thread keeps the shelf responsive.
+        // Use store targets only: demo executables use Windows paths that
+        // do not validate on Linux hosts.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("library.json");
+        let mut shell = Shell::state();
+        shell.path = path.clone();
+        for id in 1..=6u32 {
+            shell.library.games.push(Game {
+                metadata: Default::default(),
+                name: format!("Game {id}"),
+                target: Target::Steam { app_id: id },
+                favorite: false,
+                last_launched: None,
+                cover: None,
+                installed: Some(true),
+                hidden: false,
+            });
+        }
+        assert!(!path.exists());
+        let baselines: Vec<Game> = shell.library.games.iter().take(5).cloned().collect();
+        for (i, baseline) in baselines.into_iter().enumerate() {
+            let mut fetched = Fetched::default();
+            fetched.metadata.genres = vec![format!("Genre{i}")];
+            shell.finish_fetched(baseline, Ok(fetched), false);
+            if i < 4 {
+                assert!(
+                    !path.exists(),
+                    "no disk write before the batch fills (got {i})"
+                );
+            }
+        }
+        assert!(path.exists(), "batch flushes after five merges");
+        let saved = Library::load(&path).unwrap();
+        assert_eq!(saved.games[0].metadata.genres, vec!["Genre0".to_string()]);
+        assert_eq!(shell.meta.unsaved, 0);
+        // Done flushes any remainder.
+        let baseline = shell.library.games[5].clone();
+        let mut fetched = Fetched::default();
+        fetched.metadata.genres = vec!["Late".into()];
+        shell.finish_fetched(baseline, Ok(fetched), false);
+        assert_eq!(shell.meta.unsaved, 1);
+        shell.flush_metadata();
+        assert_eq!(shell.meta.unsaved, 0);
+        let saved = Library::load(&path).unwrap();
+        assert_eq!(saved.games[5].metadata.genres, vec!["Late".to_string()]);
+    }
+
+    #[test]
+    fn startup_covers_decode_in_background() {
+        // Startup queues decodes on a worker; the UI inserts bytes per frame
+        // without blocking. Cards show gradient art until their decode arrives.
+        let dir = tempfile::tempdir().unwrap();
+        let a = png_fixture(dir.path(), "a.png", 32, 48);
+        let b = png_fixture(dir.path(), "b.png", 32, 48);
+        let mut shell = Shell::demo();
+        shell.library.games[0].cover = Some(a.clone());
+        shell.library.games[1].cover = Some(b.clone());
+        shell.decode_covers_async();
+        let rx = shell.cover_rx.take().expect("decoder channel");
+        let mut got = Vec::new();
+        for _ in 0..2 {
+            let (path, thumb) = rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("background decode arrives");
+            assert_eq!(thumb.rgba.len(), (thumb.width * thumb.height * 4) as usize);
+            got.push(path);
+        }
+        got.sort();
+        assert_eq!(got, vec![a, b]);
+    }
+
+    #[test]
+    fn artwork_previews_use_worker_pixels_without_decoding() {
+        // finish_images inserts worker bytes directly, even for paths that
+        // do not exist on disk, proving no UI-thread decode happens here.
+        let mut shell = Shell::demo();
+        let target = shell.library.games[1].target.clone();
+        shell.meta.target = Some(target.clone());
+        shell.meta.kind = ImageKind::Cover;
+        let missing = PathBuf::from("/definitely/missing/art.png");
+        let thumb = metadata::UiThumbnail {
+            width: 2,
+            height: 2,
+            rgba: vec![0; 2 * 2 * 4],
+        };
+        shell.finish_images(
+            Some(target),
+            ImageKind::Cover,
+            620,
+            Ok(vec![ImagePreview {
+                label: "Official".into(),
+                source: "Steam".into(),
+                path: Ok(missing.clone()),
+                preview: Some(thumb),
+            }]),
+        );
+        assert!(
+            shell.meta.previews.contains_key(&missing),
+            "worker pixels inserted without decoding"
+        );
     }
 
     #[test]

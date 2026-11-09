@@ -135,9 +135,20 @@ pub struct ImageChoice {
     pub source: String,
 }
 #[derive(Clone, Debug, Default)]
+pub struct UiThumbnail {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Default)]
 pub struct Fetched {
     pub metadata: GameMetadata,
     pub cover: Option<PathBuf>,
+    /// UI-ready thumbnail bytes produced on the worker thread (480x720).
+    /// Never persisted; keeps image decoding off the UI thread to avoid
+    /// frame hitches. `None` means the UI shows generated gradient art.
+    pub cover_preview: Option<UiThumbnail>,
     pub warnings: Vec<String>,
 }
 
@@ -626,6 +637,28 @@ fn validate_image(bytes: &[u8]) -> Result<image::DynamicImage> {
         .context("Artwork is invalid or exceeds 4096 × 4096")
 }
 
+/// Decode a cached artwork file into UI-ready thumbnail bytes (480x720).
+/// Runs on worker threads; the UI inserts the bytes without decoding to
+/// avoid frame hitches. Returns an error for missing/corrupt files, in
+/// which case the UI keeps generated gradient art.
+pub fn ui_thumbnail_from_file(path: &Path) -> Result<UiThumbnail> {
+    let bytes = std::fs::read(path).context("Cover image is unavailable")?;
+    ui_thumbnail_from_bytes(&bytes)
+}
+
+/// Decode in-memory artwork bytes into UI-ready thumbnail bytes (480x720).
+/// Shares the same PNG/JPEG, size, and dimension limits as the cache.
+pub fn ui_thumbnail_from_bytes(bytes: &[u8]) -> Result<UiThumbnail> {
+    use image::GenericImageView;
+    let image = validate_image(bytes)?.thumbnail(480, 720);
+    let (width, height) = image.dimensions();
+    Ok(UiThumbnail {
+        width,
+        height,
+        rgba: image.into_rgba8().into_raw(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -798,5 +831,25 @@ mod tests {
             assert!(error.contains("rate limit") || error.contains("too large"));
             server.join().unwrap();
         }
+    }
+    #[test]
+    fn ui_thumbnails_share_decode_limits_without_ui_work() {
+        // Valid PNG produces UI-ready bytes without the UI thread decoding.
+        // Small images upscale to the 480x720 box, mirroring decode_cover.
+        let mut image = Cursor::new(Vec::new());
+        image::RgbaImage::new(32, 48)
+            .write_to(&mut image, image::ImageFormat::Png)
+            .unwrap();
+        let thumb = ui_thumbnail_from_bytes(image.get_ref()).unwrap();
+        assert_eq!((thumb.width, thumb.height), (480, 720));
+        assert_eq!(thumb.rgba.len(), 480 * 720 * 4);
+        // Invalid bytes and missing files fail fast for gradient fallback.
+        assert!(ui_thumbnail_from_bytes(b"not an image").is_err());
+        assert!(ui_thumbnail_from_file(std::path::Path::new("/definitely/missing.png")).is_err());
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("thumb.png");
+        std::fs::write(&path, image.get_ref()).unwrap();
+        let thumb = ui_thumbnail_from_file(&path).unwrap();
+        assert_eq!(thumb.rgba.len(), (thumb.width * thumb.height * 4) as usize);
     }
 }
