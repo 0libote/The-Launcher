@@ -8,13 +8,13 @@ The card art is original gradient art with initials.
 
 ## What works
 
-- Browse the shelf in grid, list, or shelf views, search by name, filter by collection (All/Favorites/PC/Steam/Hidden), favorite games, and inspect details.
-- Add PC games through a dialog with inline validation, edit launch options, and remove entries or hide Steam games (restorable from Hidden).
-- Import Steam libraries through a background scan with warnings surfaced; entries merge without touching custom names or favorites.
-- Fetch Steam descriptions, credits, genres, and artwork, match executables to Steam titles, and pick alternate artwork. Automatic fills run after imports and saves unless disabled.
+- Browse the shelf in grid, list, or shelf views, search by name, filter by collection (All/Favorites/PC/Steam/Epic/Xbox/Hidden), favorite games, and inspect details.
+- Add PC games through a dialog with inline validation, edit launch options, and remove entries or hide store games (Steam/Epic/Xbox, restorable from Hidden).
+- Import Steam, Epic, and Xbox libraries through background scans with warnings surfaced; entries merge without touching custom names or favorites.
+- Fetch Steam descriptions, credits, genres, features, age ratings, critic scores, store links, and artwork; match PC/Epic/Xbox entries to Steam titles for metadata and pick alternate artwork. Automatic fills run after imports and saves unless disabled.
 - Choose local PNG/JPEG cover art per game, with original generated art as a fallback.
 - Arrange navigation/details panels, pick views and tile sizes, and restyle with named layouts and color presets, all saved to a workspace file.
-- Launch games through Play, with errors surfaced in the status bar. On Windows, Steam entries play/install through the Steam client.
+- Launch games through Play, with errors surfaced in the status bar. On Windows, Steam entries play/install through the Steam client, Epic through the Epic launcher protocol, and Xbox through `explorer.exe shell:AppsFolder`.
 - Persist a local JSON library with atomic replacement and a single-instance lock.
 - Browse with the mouse and search by typing. Keyboard navigation and controller input are future work.
 
@@ -39,9 +39,9 @@ Linux is a development host, not a supported release target. Install C/C++ build
 1. Select **Add game**, then **Browse…**, and choose a game’s `.exe`.
 2. Give it a name. Arguments go one per line: `--profile` and `My Profile` are two lines. Do not wrap arguments containing spaces in quotes. Leave the working directory empty to use the executable’s folder.
 3. Save, select the tile, and press **Play**. A launch request means the OS accepted the process/URI request, not that the game finished loading.
-4. For installed Steam games, select **Import Steam → Import library**. Windows detects Steam through its registry path; use the optional override if needed. To include owned, uninstalled games, provide SteamID64 and a personal API key for that import. Read [Steam integration](docs/steam-integration.md) for details and parity limits.
+4. For installed Steam games, select **Import Steam → Import library**. Windows detects Steam through its registry path; use the optional override if needed. To include owned, uninstalled games, provide SteamID64 and a personal API key for that import. Read [Steam integration](docs/steam-integration.md) for details and parity limits. For Epic, use **Import Epic** (local `.item` manifests, see [Epic integration](docs/epic-integration.md)); for Xbox, use **Import Xbox** (installed UWP packages on Windows, see [Xbox integration](docs/xbox-integration.md)).
 
-Import is additive. It does not remove uninstalled games or overwrite your existing names/favorites. Steam manifests can include tools or DLC; this first importer does not query Steam’s catalogue to distinguish them. Disconnecting a drive skips that additional library. Malformed manifests produce warnings while valid entries still import. An unusable primary root or failed account request leaves the library unchanged. Refresh through Import Steam after Steam finishes an install/uninstall.
+Import is additive. It does not remove uninstalled games or overwrite your existing names/favorites. Steam manifests can include tools or DLC; this importer excludes the redistributable but does not query Steam’s catalogue for every edge case. Epic manifests exclude DLC/plugins; Xbox imports include UWP packages that are not games until you hide them. Disconnecting a drive skips that additional library. Malformed manifests produce warnings while valid entries still import. An unusable primary root or failed account request leaves the library unchanged. Refresh through the matching Import after the store client finishes an install/uninstall.
 
 Removing an entry only removes it from this launcher, never from disk or Steam. Executables run with the launcher’s normal user permissions; add programs you trust.
 
@@ -55,6 +55,8 @@ Back up `library.json` before manual edits. Close the app first. If JSON is dama
 
 - [Visual layout editor and skinnable frame](docs/customization.md)
 - [Steam integration and Playnite reference](docs/steam-integration.md)
+- [Epic integration and Playnite reference](docs/epic-integration.md)
+- [Xbox integration and Playnite reference](docs/xbox-integration.md)
 - [Metadata providers, automatic fetching, and artwork choices](docs/metadata.md)
 - [Bundled visual system and cover art](docs/design.md)
 - [Architecture and decisions](docs/architecture.md)

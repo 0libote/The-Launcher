@@ -11,10 +11,12 @@ This keeps a single language for the application and leaves room for a more deli
 | File | Responsibility |
 | --- | --- |
 | `src/main.rs` | Local data path, instance lock, fail-safe startup, window creation |
-| `src/shell.rs` | Rune shell: toolbar, sidebar, grid/list/shelf views, game details modal/right pane, search, add/edit/remove dialogs, Steam import, metadata & artwork, cover art, workspace editor; headless scenes and shell tests |
+| `src/shell.rs` | Rune shell: toolbar, sidebar, grid/list/shelf views, game details modal/right pane, search, add/edit/remove dialogs, Steam/Epic/Xbox imports, metadata & artwork, cover art, workspace editor; headless scenes and shell tests |
 | `src/library.rs` | Versioned data model, duplicate checks, transactional edits and atomic persistence |
-| `src/launch.rs` | Validate launch targets, construct launch plans, start processes or Steam URIs |
+| `src/launch.rs` | Validate launch targets, construct launch plans, start processes or Steam/Epic/Xbox protocol handlers |
 | `src/steam.rs` | Client discovery, local installed manifests, optional owned-game API merge |
+| `src/epic.rs` | Local Epic `.item` manifest scan, DLC/plugin filtering |
+| `src/xbox.rs` | Installed UWP package scan (PowerShell JSON + manifest AppId), AppsFolder monikers |
 | `src/metadata.rs` | Metadata model/settings, built-in providers, bounded network/image cache, preservation-aware merge |
 | `src/workspace.rs` | User-owned layout/skin model, validation, atomic persistence |
 | `scripts/check.ts` | Run formatting, Clippy, and tests through Bun on Windows or Unix |
@@ -25,17 +27,24 @@ There is no plugin API, service container, database, or event bus. Add boundarie
 
 UI actions clone the small in-memory library, apply and validate an edit, serialize to a temporary file in the data directory, sync the temporary file, and atomically persist it over the existing file. The UI adopts the new library only after persistence succeeds. An exclusive file lock lives for the application lifetime. Read or schema errors stop startup; they never silently create an empty collection over existing data.
 
-Executable paths are canonicalized at entry, and duplicate executable checks ignore ASCII case on Windows. Windows path aliases and non-ASCII case differences are not a complete filesystem identity check. Launch-time existence checks handle moved or removed games. Missing executable paths remain in the library so users can edit or remove them. Steam entries hide instead of deleting: `Game.hidden` defaults to visible, stays out of the normal collections while set, and reappears through the Hidden collection. Steam re-imports preserve the flag.
+Executable paths are canonicalized at entry, and duplicate executable checks ignore ASCII case on Windows. Windows path aliases and non-ASCII case differences are not a complete filesystem identity check. Launch-time existence checks handle moved or removed games. Missing executable paths remain in the library so users can edit or remove them. Store entries (Steam/Epic/Xbox) hide instead of deleting: `Game.hidden` defaults to visible, stays out of the normal collections while set, and reappears through the Hidden collection. Re-imports preserve the flag.
 
 ## Launching
 
 Executable launches use `std::process::Command` with a vector of arguments and an explicit working directory. There is no shell expansion, command-line interpolation, or elevation. Child processes are reaped while the launcher runs. Closing the launcher leaves games running. Games that spawn another process may exit their original process immediately; this version does not track playtime or claim running-state detection.
 
-Steam targets contain a numeric app ID. Windows starts detected `steam.exe -silent` with a launch or install URI as a separate argument; non-Windows development uses the registered handler. Known uninstalled entries request installation and do not record a played timestamp. Success means dispatch was accepted, not proof that Steam started the game. Launch timestamps are recorded after dispatch. If timestamp persistence fails, the UI reports that error even though the game may already have started.
+Steam targets contain a numeric app ID. Windows starts detected `steam.exe -silent` with a launch or install URI as a separate argument; non-Windows development uses the registered handler. Known uninstalled entries request installation and do not record a played timestamp. Epic targets launch through `com.epicgames.launcher://` (full catalog form with app-only fallback). Xbox targets launch through `explorer.exe shell:AppsFolder\…` on Windows. Success means dispatch was accepted, not proof that the store client started the game. Launch timestamps are recorded after dispatch. If timestamp persistence fails, the UI reports that error even though the game may already have started.
 
-## Steam integration
+## Storefront integrations
 
-See [the Playnite reference and parity table](steam-integration.md). Local discovery and optional account-owned games merge by numeric app ID. Steam client launch/install stays in `launch.rs`; the UI owns neither protocol parsing nor network credentials after dispatch. Import runs on a worker thread. Invalid individual manifests produce warnings; fatal root/account errors leave existing library state intact.
+See [the Steam Playnite reference and parity table](steam-integration.md),
+[Epic integration](epic-integration.md), and [Xbox integration](xbox-integration.md).
+Local discovery merges by store identity (Steam app ID, Epic AppName,
+Xbox package moniker); Steam additionally supports optional account-owned
+games. Client launch stays in `launch.rs`; the UI owns neither protocol
+parsing nor network credentials after dispatch. Imports run on worker
+threads. Invalid individual manifests/packages become warnings; fatal
+root/account errors leave existing library state intact.
 
 ## User-owned workspace
 
@@ -55,6 +64,6 @@ Every surface is skin-driven: `Look::of` resolves the workspace skin (background
 
 ## Metadata pipeline
 
-See [metadata behavior and provider references](metadata.md). Steam account ownership import and public metadata fetching are separate operations; metadata needs no Steam Web API account key. The metadata overlay queues snapshots of games on a worker thread and applies individual results on the UI thread through `Library::change`, with a stop button and per-game progress. Matching a local executable records a separate Steam metadata ID without changing its launch target. Results resolve by target plus metadata ID instead of vector index, so removals/reordering cannot attach data to another entry. Title matches and artwork choices that arrive late are dropped unless the panel still shows their game and query.
+See [metadata behavior and provider references](metadata.md). Steam account ownership import and public metadata fetching are separate operations; metadata needs no Steam Web API account key. The metadata overlay queues snapshots of games on a worker thread and applies individual results on the UI thread through `Library::change`, with a stop button and per-game progress. Matching a PC, Epic, or Xbox game records a separate Steam metadata ID without changing its launch target. Results resolve by target plus metadata ID instead of vector index, so removals/reordering cannot attach data to another entry. Title matches and artwork choices that arrive late are dropped unless the panel still shows their game and query.
 
 The merge fills empty fields unless explicit per-game replacement was selected, compares every field against its request-time baseline to preserve in-flight edits, and retains source attribution. Artwork requests use fixed provider origins, restricted HTTPS CDN hosts, disabled redirects, time/size/decode limits, and atomic PNG cache writes. No key is serialized. `metadata.json` owns provider/download preferences independently of `workspace.json`; cached images live under `artwork/`. Decoded pixels live in a 64-entry covers cache plus a panel-scoped choice cache that clears when the panel reopens or a new browse starts, so browsing artwork cannot grow retained images without bound. The current concrete provider choices are Steam text/art and optional SteamGridDB art with Steam fallback; there is no dynamic plugin loader.

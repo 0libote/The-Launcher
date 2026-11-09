@@ -20,6 +20,12 @@ pub struct GameMetadata {
     pub developers: Vec<String>,
     pub publishers: Vec<String>,
     pub genres: Vec<String>,
+    pub features: Vec<String>,
+    pub tags: Vec<String>,
+    pub links: Vec<String>,
+    pub age_rating: String,
+    pub series: String,
+    pub critic_score: Option<u8>,
     pub release_date: String,
     pub background: Option<PathBuf>,
     pub logo: Option<PathBuf>,
@@ -87,6 +93,10 @@ impl Settings {
                 || game.metadata.developers.is_empty()
                 || game.metadata.publishers.is_empty()
                 || game.metadata.genres.is_empty()
+                || game.metadata.features.is_empty()
+                || game.metadata.links.is_empty()
+                || game.metadata.age_rating.is_empty()
+                || game.metadata.critic_score.is_none()
                 || game.metadata.release_date.is_empty();
             next.download_cover &= game.cover.is_none();
             next.download_background &= game.metadata.background.is_none();
@@ -162,7 +172,26 @@ pub fn apply(game: &mut Game, baseline: &Game, fetched: Fetched, replace: bool) 
     field!(developers);
     field!(publishers);
     field!(genres);
+    field!(features);
+    field!(links);
+    field!(age_rating);
+    field!(series);
     field!(release_date);
+    // Playnite-style scores: only fill when the current value matches the
+    // request baseline, so manual corrections and in-flight edits survive.
+    if from.critic_score.is_some()
+        && game.metadata.critic_score == baseline.metadata.critic_score
+        && (replace || game.metadata.critic_score.is_none())
+    {
+        game.metadata.critic_score = from.critic_score;
+        if let Some(source) = from.sources.get("critic_score") {
+            game.metadata
+                .sources
+                .insert("critic_score".into(), source.clone());
+        }
+    }
+    // Tags stay manual-only (Playnite user labels). Provider results never
+    // overwrite them; they are preserved here by not merging.
     for kind in [ImageKind::Cover, ImageKind::Background, ImageKind::Logo] {
         let (current, old, incoming) = match kind {
             ImageKind::Cover => (&mut game.cover, &baseline.cover, fetched.cover.clone()),
@@ -457,6 +486,26 @@ fn parse_details(id: u32, value: &Value) -> Result<GameMetadata> {
             .take(64)
             .map(plain_text)
             .collect(),
+        features: data["categories"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|v| v["description"].as_str())
+            .take(64)
+            .map(plain_text)
+            .collect(),
+        links: vec![format!("https://store.steampowered.com/app/{id}")],
+        age_rating: match data["required_age"].as_str().unwrap_or_default().trim() {
+            "" | "0" => String::new(),
+            raw => match raw.parse::<u8>() {
+                Ok(0) => String::new(),
+                Ok(age) => format!("{age}+"),
+                Err(_) => String::new(),
+            },
+        },
+        critic_score: data["metacritic"]["score"]
+            .as_u64()
+            .and_then(|score| u8::try_from(score).ok().filter(|score| *score > 0)),
         release_date: plain_text(data["release_date"]["date"].as_str().unwrap_or_default()),
         ..Default::default()
     };
@@ -465,6 +514,10 @@ fn parse_details(id: u32, value: &Value) -> Result<GameMetadata> {
         ("developers", !out.developers.is_empty()),
         ("publishers", !out.publishers.is_empty()),
         ("genres", !out.genres.is_empty()),
+        ("features", !out.features.is_empty()),
+        ("links", !out.links.is_empty()),
+        ("age_rating", !out.age_rating.is_empty()),
+        ("critic_score", out.critic_score.is_some()),
         ("release_date", !out.release_date.is_empty()),
     ] {
         if present {
@@ -578,10 +631,16 @@ mod tests {
     use super::*;
     #[test]
     fn provider_data_is_bounded_and_matches_exact_app() {
-        let value = serde_json::json!({"42":{"success":true,"data":{"steam_appid":42,"short_description":"<b>Hello</b> &amp; welcome","developers":["Studio"],"genres":[{"description":"Action"}],"release_date":{"date":"Coming soon"}}}});
+        let value = serde_json::json!({"42":{"success":true,"data":{"steam_appid":42,"short_description":"<b>Hello</b> &amp; welcome","developers":["Studio"],"genres":[{"description":"Action"}],"categories":[{"description":"Single-player"}],"required_age":"18","metacritic":{"score":88},"release_date":{"date":"Coming soon"}}}});
         let out = parse_details(42, &value).unwrap();
         assert_eq!(out.description, "Hello & welcome");
         assert_eq!(out.sources["genres"], "Steam");
+        assert_eq!(out.features, vec!["Single-player"]);
+        assert_eq!(out.links, vec!["https://store.steampowered.com/app/42"]);
+        assert_eq!(out.age_rating, "18+");
+        assert_eq!(out.critic_score, Some(88));
+        assert_eq!(out.sources["features"], "Steam");
+        assert_eq!(out.sources["critic_score"], "Steam");
         assert!(parse_details(43, &value).is_err());
         let wrong = serde_json::json!({"42":{"success":true,"data":{"steam_appid":43}}});
         assert!(parse_details(42, &wrong).is_err());
@@ -638,6 +697,7 @@ mod tests {
         let mut game = sample_game();
         game.cover = Some(PathBuf::from("custom.png"));
         game.metadata.publishers = vec!["My publisher".into()];
+        game.metadata.tags = vec!["my-tag".into()];
         let baseline = game.clone();
         game.metadata.description = "My edit while downloading".into();
         let fetched = Fetched {
@@ -645,10 +705,18 @@ mod tests {
                 description: "Downloaded description".into(),
                 developers: vec!["Studio".into()],
                 publishers: vec!["Provider publisher".into()],
+                features: vec!["Single-player".into()],
+                links: vec!["https://store.steampowered.com/app/42".into()],
+                age_rating: "18+".into(),
+                critic_score: Some(88),
                 background: Some(PathBuf::from("background.png")),
                 sources: BTreeMap::from([
                     ("description".into(), "Steam".into()),
                     ("developers".into(), "Steam".into()),
+                    ("features".into(), "Steam".into()),
+                    ("links".into(), "Steam".into()),
+                    ("age_rating".into(), "Steam".into()),
+                    ("critic_score".into(), "Steam".into()),
                     ("cover".into(), "Steam".into()),
                 ]),
                 ..Default::default()
@@ -667,6 +735,9 @@ mod tests {
         assert_eq!(game.metadata.publishers, vec!["My publisher"]);
         assert_eq!(game.cover, baseline.cover);
         assert_eq!(game.metadata.developers, vec!["Studio"]);
+        assert_eq!(game.metadata.features, vec!["Single-player"]);
+        assert_eq!(game.metadata.critic_score, Some(88));
+        assert_eq!(game.metadata.tags, vec!["my-tag"], "tags stay manual-only");
         assert!(!game.metadata.sources.contains_key("cover"));
         let next_baseline = game.clone();
         apply(&mut game, &next_baseline, fetched, true);

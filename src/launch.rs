@@ -13,6 +13,8 @@ pub enum LaunchPlan {
         directory: PathBuf,
     },
     Steam(String),
+    Epic(String),
+    Xbox(String),
 }
 
 /// Steam URI for an app: the install flow when the library records the
@@ -28,10 +30,53 @@ pub fn steam_uri(app_id: u32, installed: Option<bool>) -> Result<String> {
     }
 }
 
+/// Epic launch URI. Playnite uses
+/// `com.epicgames.launcher://apps/<namespace>:<item>:<app>?action=launch&silent=true`.
+/// Older manifests may lack the catalog fields; fall back to the app-only
+/// form so those entries still dispatch to the client.
+pub fn epic_uri(namespace: &str, item_id: &str, app_name: &str) -> Result<String> {
+    if app_name.trim().is_empty() {
+        bail!("Epic app name must not be empty");
+    }
+    let app = app_name.trim();
+    if !namespace.trim().is_empty() && !item_id.trim().is_empty() {
+        Ok(format!(
+            "com.epicgames.launcher://apps/{}:{}:{}?action=launch&silent=true",
+            namespace.trim(),
+            item_id.trim(),
+            app
+        ))
+    } else {
+        Ok(format!(
+            "com.epicgames.launcher://apps/{app}?action=launch&silent=true"
+        ))
+    }
+}
+
+/// Xbox launch moniker for `shell:AppsFolder`. Playnite launches UWP entries
+/// through the AppsFolder moniker `<PackageFamilyName>!<AppId>`.
+pub fn xbox_shell_moniker(package_id: &str) -> Result<String> {
+    let package = package_id.trim();
+    if package.is_empty() || !package.contains('!') {
+        bail!("Xbox package ID must look like FamilyName!App");
+    }
+    Ok(format!("shell:AppsFolder\\{package}"))
+}
+
 pub fn plan(game: &Game) -> Result<LaunchPlan> {
     validate_game(game)?;
     match &game.target {
         Target::Steam { app_id } => Ok(LaunchPlan::Steam(steam_uri(*app_id, game.installed)?)),
+        Target::Epic {
+            app_name,
+            catalog_namespace,
+            catalog_item_id,
+        } => Ok(LaunchPlan::Epic(epic_uri(
+            catalog_namespace,
+            catalog_item_id,
+            app_name,
+        )?)),
+        Target::Xbox { package_id } => Ok(LaunchPlan::Xbox(xbox_shell_moniker(package_id)?)),
         Target::Executable {
             path,
             arguments,
@@ -65,6 +110,15 @@ pub fn launch(game: &Game) -> Result<Option<Child>> {
     match plan(game)? {
         LaunchPlan::Steam(uri) => {
             open_steam_uri(&uri)?;
+            Ok(None)
+        }
+        LaunchPlan::Epic(uri) => {
+            open::that_detached(&uri)
+                .context("Cannot open Epic Games Launcher; install it and its protocol handler")?;
+            Ok(None)
+        }
+        LaunchPlan::Xbox(moniker) => {
+            open_xbox_moniker(&moniker)?;
             Ok(None)
         }
         LaunchPlan::Executable {
@@ -107,6 +161,25 @@ fn open_steam_uri(uri: &str) -> Result<()> {
 fn open_steam_uri(uri: &str) -> Result<()> {
     open::that_detached(uri)
         .context("Cannot open Steam; install Steam and its protocol handler")?;
+    Ok(())
+}
+
+/// Open an Xbox AppsFolder moniker. On Windows this goes through
+/// `explorer.exe shell:AppsFolder\...` without a shell; elsewhere the
+/// platform handler is tried so plans stay testable off Windows.
+#[cfg(windows)]
+fn open_xbox_moniker(moniker: &str) -> Result<()> {
+    Command::new("explorer.exe")
+        .arg(moniker)
+        .spawn()
+        .context("Cannot start the Xbox game; Windows could not open its package")?;
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn open_xbox_moniker(moniker: &str) -> Result<()> {
+    open::that_detached(moniker)
+        .context("Xbox games need Windows; cannot open the package here")?;
     Ok(())
 }
 
@@ -156,6 +229,43 @@ mod tests {
             plan(&game).unwrap(),
             LaunchPlan::Steam("steam://install/42".into())
         );
+    }
+
+    #[test]
+    fn epic_and_xbox_plans_use_protocol_handlers() {
+        let epic: Game = serde_json::from_value(json!({
+            "name": "Epic game",
+            "target": { "kind": "epic", "app_name": "Fortnite", "catalog_namespace": "fn", "catalog_item_id": "abc" },
+        }))
+        .expect("fixture Epic game");
+        assert_eq!(
+            plan(&epic).unwrap(),
+            LaunchPlan::Epic(
+                "com.epicgames.launcher://apps/fn:abc:Fortnite?action=launch&silent=true".into()
+            )
+        );
+        let legacy_epic: Game = serde_json::from_value(json!({
+            "name": "Legacy Epic",
+            "target": { "kind": "epic", "app_name": "SideLoaded" },
+        }))
+        .expect("fixture legacy Epic game");
+        assert!(matches!(plan(&legacy_epic).unwrap(), LaunchPlan::Epic(_)));
+
+        let xbox: Game = serde_json::from_value(json!({
+            "name": "Xbox game",
+            "target": { "kind": "xbox", "package_id": "Fam!App" },
+        }))
+        .expect("fixture Xbox game");
+        assert_eq!(
+            plan(&xbox).unwrap(),
+            LaunchPlan::Xbox("shell:AppsFolder\\Fam!App".into())
+        );
+        let bad_xbox: Game = serde_json::from_value(json!({
+            "name": "Bad Xbox",
+            "target": { "kind": "xbox", "package_id": "Fam" },
+        }))
+        .expect("fixture bad Xbox game");
+        assert!(plan(&bad_xbox).is_err());
     }
 
     #[test]

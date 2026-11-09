@@ -27,11 +27,12 @@ use rune::{
     el, row, spacer, text, text_input,
 };
 use the_launcher::{
-    launch,
+    epic, launch,
     library::{Game, Library, Target},
     metadata::{self, ArtworkProvider, Fetched, ImageKind, Settings},
     steam,
     workspace::{Details, Navigation, View, Workspace},
+    xbox,
 };
 
 /// Accent presets for the workspace editor: coral is the default.
@@ -216,15 +217,19 @@ enum Filter {
     Favorites,
     Pc,
     Steam,
+    Epic,
+    Xbox,
     Hidden,
 }
 
 impl Filter {
-    const ALL: [(Filter, &'static str, &'static str); 5] = [
+    const ALL: [(Filter, &'static str, &'static str); 7] = [
         (Filter::All, "all", "All games"),
         (Filter::Favorites, "favorites", "Favorites"),
         (Filter::Pc, "pc", "PC"),
         (Filter::Steam, "steam", "Steam"),
+        (Filter::Epic, "epic", "Epic"),
+        (Filter::Xbox, "xbox", "Xbox"),
         (Filter::Hidden, "hidden", "Hidden"),
     ];
 
@@ -240,6 +245,8 @@ impl Filter {
             Filter::Favorites => game.favorite,
             Filter::Pc => game.source() == "PC",
             Filter::Steam => game.source() == "Steam",
+            Filter::Epic => game.source() == "Epic",
+            Filter::Xbox => game.source() == "Xbox",
             Filter::Hidden => false,
         }
     }
@@ -257,6 +264,8 @@ pub struct Shell {
     draft: Option<Draft>,
     remove: bool,
     steam: SteamPanel,
+    epic: EpicPanel,
+    xbox: XboxPanel,
     workspace: Workspace,
     workspace_path: PathBuf,
     workspace_open: bool,
@@ -302,7 +311,7 @@ struct ImagePreview {
 }
 
 enum MetaEvent {
-    Fetched(Box<Game>, Result<Fetched, String>, bool),
+    Fetched(Box<Game>, Box<Result<Fetched, String>>, bool),
     Matches(Option<Target>, String, Result<Vec<metadata::Match>, String>),
     Images(
         Option<Target>,
@@ -379,7 +388,9 @@ impl Draft {
                     .map(|dir| dir.display().to_string())
                     .unwrap_or_default(),
             ),
-            Target::Steam { .. } => (String::new(), String::new(), String::new()),
+            Target::Steam { .. } | Target::Epic { .. } | Target::Xbox { .. } => {
+                (String::new(), String::new(), String::new())
+            }
         };
         let mut name = TextEdit::new(game.name.clone());
         name.focused = true;
@@ -432,6 +443,71 @@ impl SteamPanel {
     }
 }
 
+/// Epic import overlay: local `.item` manifest scan. No account route yet.
+struct EpicPanel {
+    open: bool,
+    manifest_dir: TextEdit,
+    scanning: bool,
+    error: Option<String>,
+    summary: Option<String>,
+    warnings: Vec<String>,
+    rx: Option<mpsc::Receiver<Result<epic::ImportResult>>>,
+}
+
+impl EpicPanel {
+    fn closed() -> Self {
+        EpicPanel {
+            open: false,
+            manifest_dir: TextEdit::new(""),
+            scanning: false,
+            error: None,
+            summary: None,
+            warnings: Vec::new(),
+            rx: None,
+        }
+    }
+
+    fn opened(&mut self) {
+        self.open = true;
+        self.error = None;
+        self.summary = None;
+        self.warnings.clear();
+    }
+}
+
+/// Xbox import overlay: installed UWP packages on Windows. Account titles,
+/// console games, and playtime need an authenticated Xbox API (future work).
+struct XboxPanel {
+    open: bool,
+    json_path: TextEdit,
+    scanning: bool,
+    error: Option<String>,
+    summary: Option<String>,
+    warnings: Vec<String>,
+    rx: Option<mpsc::Receiver<Result<xbox::ImportResult>>>,
+}
+
+impl XboxPanel {
+    fn closed() -> Self {
+        XboxPanel {
+            open: false,
+            json_path: TextEdit::new(""),
+            scanning: false,
+            error: None,
+            summary: None,
+            warnings: Vec::new(),
+            rx: None,
+        }
+    }
+
+    fn opened(&mut self) {
+        self.open = true;
+        self.error = None;
+        self.summary = None;
+        self.warnings.clear();
+    }
+}
+
 impl Shell {
     fn state() -> Shell {
         Shell {
@@ -446,6 +522,8 @@ impl Shell {
             draft: None,
             remove: false,
             steam: SteamPanel::closed(),
+            epic: EpicPanel::closed(),
+            xbox: XboxPanel::closed(),
             workspace: Workspace::default(),
             workspace_path: PathBuf::new(),
             workspace_open: false,
@@ -538,7 +616,7 @@ impl Shell {
             installed: None,
             hidden: false,
         };
-        use the_launcher::library::Target::{Executable, Steam};
+        use the_launcher::library::Target::{Epic, Executable, Steam, Xbox};
         shell.library.games = vec![
             game(
                 "Hollow Drift",
@@ -584,6 +662,26 @@ impl Shell {
                     working_directory: None,
                 },
             ),
+            Game {
+                installed: Some(true),
+                ..game(
+                    "Night Market",
+                    Epic {
+                        app_name: "NightMarket".into(),
+                        catalog_namespace: "mm".into(),
+                        catalog_item_id: "001".into(),
+                    },
+                )
+            },
+            Game {
+                installed: Some(true),
+                ..game(
+                    "Pixel Cart",
+                    Xbox {
+                        package_id: "PixelCart_abc!App".into(),
+                    },
+                )
+            },
         ];
         shell.selected = Some(1);
         shell
@@ -841,7 +939,7 @@ impl Shell {
             self.remove = false;
             return;
         };
-        let hiding = !game.hidden && matches!(game.target, Target::Steam { .. });
+        let hiding = game.hides_instead_of_removing();
         let apply = |library: &mut Library| -> Result<()> {
             if library.games.get(index).is_none() {
                 bail!("That game is no longer in the library");
@@ -1020,6 +1118,131 @@ impl Shell {
         }
     }
 
+    /// Start an Epic scan on a worker thread; [`poll`] merges the result.
+    fn begin_epic_scan(&mut self) {
+        let options = epic::ImportOptions {
+            manifest_dir: (!self.epic.manifest_dir.text.trim().is_empty())
+                .then(|| PathBuf::from(self.epic.manifest_dir.text.trim())),
+        };
+        let (tx, rx) = mpsc::channel();
+        self.epic.rx = Some(rx);
+        self.epic.scanning = true;
+        self.epic.error = None;
+        self.epic.summary = None;
+        self.epic.warnings.clear();
+        std::thread::spawn(move || {
+            let _ = tx.send(epic::import(options));
+        });
+    }
+
+    fn finish_epic_scan(&mut self, result: Result<epic::ImportResult>) {
+        self.epic.scanning = false;
+        self.epic.rx = None;
+        match result {
+            Err(error) => {
+                self.epic.error = Some(format!("{error:#}"));
+            }
+            Ok(imported) => {
+                let warnings = imported.warnings.clone();
+                let outcome = self.persist_epic_import(&imported);
+                match outcome {
+                    Err(error) => self.epic.error = Some(format!("{error:#}")),
+                    Ok(added) => {
+                        let summary = format!(
+                            "Imported {added} Epic games. Existing entries kept. {}",
+                            warnings.join("\n")
+                        );
+                        self.epic.summary = Some(summary.clone());
+                        self.epic.warnings = warnings;
+                        self.notice = Some(summary);
+                        self.reselect();
+                        self.maybe_automatic();
+                    }
+                }
+            }
+        }
+    }
+
+    fn persist_epic_import(&mut self, imported: &epic::ImportResult) -> Result<usize> {
+        if self.path.as_os_str().is_empty() {
+            let mut next = self.library.clone();
+            let added = merge_epic_import(&mut next, imported)?;
+            self.library = next;
+            Ok(added)
+        } else {
+            let path = self.path.clone();
+            let mut added = 0;
+            self.library.change(&path, |library| {
+                added = merge_epic_import(library, imported)?;
+                Ok(())
+            })?;
+            Ok(added)
+        }
+    }
+
+    /// Start an Xbox scan on a worker thread; [`poll`] merges the result.
+    fn begin_xbox_scan(&mut self) {
+        let options = xbox::ImportOptions {
+            appx_json: (!self.xbox.json_path.text.trim().is_empty())
+                .then(|| PathBuf::from(self.xbox.json_path.text.trim())),
+            raw_appx_json: None,
+        };
+        let (tx, rx) = mpsc::channel();
+        self.xbox.rx = Some(rx);
+        self.xbox.scanning = true;
+        self.xbox.error = None;
+        self.xbox.summary = None;
+        self.xbox.warnings.clear();
+        std::thread::spawn(move || {
+            let _ = tx.send(xbox::import(options));
+        });
+    }
+
+    fn finish_xbox_scan(&mut self, result: Result<xbox::ImportResult>) {
+        self.xbox.scanning = false;
+        self.xbox.rx = None;
+        match result {
+            Err(error) => {
+                self.xbox.error = Some(format!("{error:#}"));
+            }
+            Ok(imported) => {
+                let warnings = imported.warnings.clone();
+                let outcome = self.persist_xbox_import(&imported);
+                match outcome {
+                    Err(error) => self.xbox.error = Some(format!("{error:#}")),
+                    Ok(added) => {
+                        let summary = format!(
+                            "Imported {added} Xbox games. Existing entries kept. {}",
+                            warnings.join("\n")
+                        );
+                        self.xbox.summary = Some(summary.clone());
+                        self.xbox.warnings = warnings;
+                        self.notice = Some(summary);
+                        self.reselect();
+                        self.maybe_automatic();
+                    }
+                }
+            }
+        }
+    }
+
+    fn persist_xbox_import(&mut self, imported: &xbox::ImportResult) -> Result<usize> {
+        if self.path.as_os_str().is_empty() {
+            let mut next = self.library.clone();
+            let added = merge_xbox_import(&mut next, imported)?;
+            self.library = next;
+            Ok(added)
+        } else {
+            let path = self.path.clone();
+            let mut added = 0;
+            self.library.change(&path, |library| {
+                added = merge_xbox_import(library, imported)?;
+                Ok(())
+            })?;
+            Ok(added)
+        }
+    }
+
     fn open_meta(&mut self, index: Option<usize>) {
         let meta = &mut self.meta;
         meta.open = true;
@@ -1079,7 +1302,7 @@ impl Shell {
             .collect();
         if games.is_empty() {
             self.meta.status =
-                "No matching games need the enabled fields. Match an executable to a Steam title first."
+                "No matching games need the enabled fields. Match a PC, Epic, or Xbox game to a Steam title first."
                     .into();
             return;
         }
@@ -1116,7 +1339,11 @@ impl Shell {
                     break;
                 }
                 if tx
-                    .send(MetaEvent::Fetched(Box::new(game), result, replace))
+                    .send(MetaEvent::Fetched(
+                        Box::new(game),
+                        Box::new(result),
+                        replace,
+                    ))
                     .is_err()
                 {
                     return;
@@ -1490,6 +1717,80 @@ fn merge_import(library: &mut Library, imported: &steam::ImportResult) -> Result
     Ok(added)
 }
 
+/// Fold an Epic scan into the library. Installed-only today: a clean scan
+/// refreshes installed flags, a warned scan preserves them conservatively.
+fn merge_epic_import(library: &mut Library, imported: &epic::ImportResult) -> Result<usize> {
+    let mut added = 0;
+    if imported.warnings.is_empty() {
+        for game in &mut library.games {
+            if matches!(game.target, Target::Epic { .. }) {
+                game.installed = Some(false);
+            }
+        }
+    }
+    for game in &imported.games {
+        let target = Target::Epic {
+            app_name: game.app_name.clone(),
+            catalog_namespace: game.catalog_namespace.clone(),
+            catalog_item_id: game.catalog_item_id.clone(),
+        };
+        if let Some(existing) = library.games.iter_mut().find(|g| g.target == target) {
+            if imported.warnings.is_empty() {
+                existing.installed = Some(true);
+            }
+            continue;
+        }
+        library.add(Game {
+            metadata: Default::default(),
+            name: game.display_name.clone(),
+            target,
+            favorite: false,
+            last_launched: None,
+            cover: None,
+            installed: Some(true),
+            hidden: false,
+        })?;
+        added += 1;
+    }
+    Ok(added)
+}
+
+/// Fold an Xbox scan into the library. Installed-only today: entries are
+/// UWP packages present on this PC. Clean scans refresh installed flags.
+fn merge_xbox_import(library: &mut Library, imported: &xbox::ImportResult) -> Result<usize> {
+    let mut added = 0;
+    if imported.warnings.is_empty() {
+        for game in &mut library.games {
+            if matches!(game.target, Target::Xbox { .. }) {
+                game.installed = Some(false);
+            }
+        }
+    }
+    for game in &imported.games {
+        let target = Target::Xbox {
+            package_id: game.package_id.clone(),
+        };
+        if let Some(existing) = library.games.iter_mut().find(|g| g.target == target) {
+            if imported.warnings.is_empty() {
+                existing.installed = Some(true);
+            }
+            continue;
+        }
+        library.add(Game {
+            metadata: Default::default(),
+            name: game.name.clone(),
+            target,
+            favorite: false,
+            last_launched: None,
+            cover: None,
+            installed: Some(true),
+            hidden: false,
+        })?;
+        added += 1;
+    }
+    Ok(added)
+}
+
 /// Decode a local PNG/JPEG cover into GPU-ready pixels, thumbnailing large
 /// files. Mirrors the old texture limits: PNG/JPEG only, 16 MiB, 4096 px,
 /// 64 MiB decode budget.
@@ -1797,7 +2098,7 @@ pub fn spec() -> AppSpec<Shell> {
     }
 }
 
-/// Reap finished game processes and merge finished Steam/metadata work.
+/// Reap finished game processes and merge finished Steam/Epic/Xbox/metadata work.
 /// A running scan re-arms a short wake so its result lands without input.
 fn poll(s: &mut Shell, _now: f64, tx: &mut Tx) -> bool {
     s.children
@@ -1819,11 +2120,43 @@ fn poll(s: &mut Shell, _now: f64, tx: &mut Tx) -> bool {
             None => {}
         }
     }
+    if s.epic.scanning {
+        match s.epic.rx.as_ref().map(mpsc::Receiver::try_recv) {
+            Some(Ok(result)) => {
+                s.finish_epic_scan(result);
+                changed = true;
+            }
+            Some(Err(mpsc::TryRecvError::Empty)) => {
+                tx.wake_after(Duration::from_millis(200));
+            }
+            Some(Err(mpsc::TryRecvError::Disconnected)) => {
+                s.finish_epic_scan(Err(anyhow::anyhow!("Epic scan stopped unexpectedly")));
+                changed = true;
+            }
+            None => {}
+        }
+    }
+    if s.xbox.scanning {
+        match s.xbox.rx.as_ref().map(mpsc::Receiver::try_recv) {
+            Some(Ok(result)) => {
+                s.finish_xbox_scan(result);
+                changed = true;
+            }
+            Some(Err(mpsc::TryRecvError::Empty)) => {
+                tx.wake_after(Duration::from_millis(200));
+            }
+            Some(Err(mpsc::TryRecvError::Disconnected)) => {
+                s.finish_xbox_scan(Err(anyhow::anyhow!("Xbox scan stopped unexpectedly")));
+                changed = true;
+            }
+            None => {}
+        }
+    }
     if s.meta.busy {
         loop {
             match s.meta.rx.as_ref().map(mpsc::Receiver::try_recv) {
                 Some(Ok(MetaEvent::Fetched(baseline, result, replace))) => {
-                    s.finish_fetched(*baseline, result, replace);
+                    s.finish_fetched(*baseline, *result, replace);
                     changed = true;
                 }
                 Some(Ok(MetaEvent::Matches(target, query, result))) => {
@@ -1898,6 +2231,12 @@ fn view(s: &Shell, cx: &mut Cx<Shell>) -> El {
     }
     if s.steam.open {
         root = root.child(steam_dialog(s, look));
+    }
+    if s.epic.open {
+        root = root.child(epic_dialog(s, look));
+    }
+    if s.xbox.open {
+        root = root.child(xbox_dialog(s, look));
     }
     if s.meta.open {
         root = root.child(meta_dialog(s, look));
@@ -2204,7 +2543,7 @@ fn remove_dialog(s: &Shell, look: Look) -> El {
         .library
         .games
         .get(index)
-        .is_some_and(|game| !game.hidden && matches!(game.target, Target::Steam { .. }));
+        .is_some_and(|game| game.hides_instead_of_removing());
     let (title, body, confirm) = if hiding {
         (
             "Hide this game?",
@@ -2344,6 +2683,232 @@ fn steam_dialog(s: &Shell, look: Look) -> El {
             true,
             |s: &mut Shell| {
                 s.steam.open = false;
+            },
+            form,
+        ))
+}
+
+fn epic_dialog(s: &Shell, look: Look) -> El {
+    let mut form = col().key("epic-form").w_full().gap(12.0).child(
+        text("Scan Epic manifests and merge installed games. No login; DLC, plugins, and missing folders are skipped.")
+            .font(type_::LABEL)
+            .color(look.muted),
+    );
+    let dir = text_input(&s.epic.manifest_dir, type_::BODY.lh(20.0))
+        .key("epic-dir")
+        .label("Epic manifests folder")
+        .single_line()
+        .w_full()
+        .color(look.text)
+        .placeholder("Detect automatically on Windows", look.muted)
+        .on_edit(|s: &mut Shell| &mut s.epic.manifest_dir);
+    form = form.child(
+        col()
+            .key("epic-dir-field")
+            .w_full()
+            .gap(6.0)
+            .child(
+                text("Manifests folder — blank uses automatic detection")
+                    .font(type_::LABEL)
+                    .color(look.muted),
+            )
+            .child(
+                el().key("epic-dir-box")
+                    .w_full()
+                    .h(40.0)
+                    .radius(radius::MD)
+                    .border(1.0, look.line)
+                    .px(12.0)
+                    .center_y()
+                    .child(dir),
+            ),
+    );
+    if s.epic.scanning {
+        form = form.child(
+            text("Scanning Epic manifests…")
+                .key("epic-status")
+                .font(type_::BODY)
+                .color(look.text),
+        );
+    }
+    if let Some(error) = &s.epic.error {
+        form = form.child(
+            text(error.clone())
+                .key("epic-error")
+                .font(type_::LABEL)
+                .color(look.err),
+        );
+    }
+    if let Some(summary) = &s.epic.summary {
+        form = form.child(
+            text(summary.clone())
+                .key("epic-summary")
+                .font(type_::LABEL)
+                .color(look.select),
+        );
+        for (i, warning) in s.epic.warnings.iter().take(5).enumerate() {
+            form = form.child(
+                text(format!("• {warning}"))
+                    .key(format!("epic-warning-{i}"))
+                    .font(type_::LABEL)
+                    .color(look.muted),
+            );
+        }
+        if s.epic.warnings.len() > 5 {
+            form = form.child(
+                text(format!("…and {} more", s.epic.warnings.len() - 5))
+                    .font(type_::LABEL)
+                    .color(look.muted),
+            );
+        }
+    }
+    let mut buttons = row().key("dialog-buttons").w_full().gap(12.0);
+    if !s.epic.scanning {
+        buttons = buttons.child(dialog_button(
+            "epic-scan",
+            "Scan",
+            true,
+            look,
+            |s: &mut Shell| {
+                s.begin_epic_scan();
+            },
+        ));
+    }
+    buttons = buttons.child(dialog_button(
+        "epic-close",
+        "Close",
+        false,
+        look,
+        |s: &mut Shell| {
+            s.epic.open = false;
+        },
+    ));
+    form = form.child(buttons);
+    el().key("epic-dialog")
+        .absolute(0.0, 0.0)
+        .w_full()
+        .h_full()
+        .child(scrim())
+        .child(panel(
+            look,
+            "epic-dialog",
+            "Import Epic",
+            true,
+            |s: &mut Shell| {
+                s.epic.open = false;
+            },
+            form,
+        ))
+}
+
+fn xbox_dialog(s: &Shell, look: Look) -> El {
+    let mut form = col().key("xbox-form").w_full().gap(12.0).child(
+        text("List installed Xbox/UWP packages on Windows and merge them. Account titles, console games, and playtime need the Xbox API (future work).")
+            .font(type_::LABEL)
+            .color(look.muted),
+    );
+    let path = text_input(&s.xbox.json_path, type_::BODY.lh(20.0))
+        .key("xbox-json")
+        .label("Package list JSON override (dev)")
+        .single_line()
+        .w_full()
+        .color(look.text)
+        .placeholder("Blank uses PowerShell on Windows", look.muted)
+        .on_edit(|s: &mut Shell| &mut s.xbox.json_path);
+    form = form.child(
+        col()
+            .key("xbox-json-field")
+            .w_full()
+            .gap(6.0)
+            .child(
+                text("Override — blank uses automatic detection")
+                    .font(type_::LABEL)
+                    .color(look.muted),
+            )
+            .child(
+                el().key("xbox-json-box")
+                    .w_full()
+                    .h(40.0)
+                    .radius(radius::MD)
+                    .border(1.0, look.line)
+                    .px(12.0)
+                    .center_y()
+                    .child(path),
+            ),
+    );
+    if s.xbox.scanning {
+        form = form.child(
+            text("Scanning Xbox packages…")
+                .key("xbox-status")
+                .font(type_::BODY)
+                .color(look.text),
+        );
+    }
+    if let Some(error) = &s.xbox.error {
+        form = form.child(
+            text(error.clone())
+                .key("xbox-error")
+                .font(type_::LABEL)
+                .color(look.err),
+        );
+    }
+    if let Some(summary) = &s.xbox.summary {
+        form = form.child(
+            text(summary.clone())
+                .key("xbox-summary")
+                .font(type_::LABEL)
+                .color(look.select),
+        );
+        for (i, warning) in s.xbox.warnings.iter().take(5).enumerate() {
+            form = form.child(
+                text(format!("• {warning}"))
+                    .key(format!("xbox-warning-{i}"))
+                    .font(type_::LABEL)
+                    .color(look.muted),
+            );
+        }
+        if s.xbox.warnings.len() > 5 {
+            form = form.child(
+                text(format!("…and {} more", s.xbox.warnings.len() - 5))
+                    .font(type_::LABEL)
+                    .color(look.muted),
+            );
+        }
+    }
+    let mut buttons = row().key("dialog-buttons").w_full().gap(12.0);
+    if !s.xbox.scanning {
+        buttons = buttons.child(dialog_button(
+            "xbox-scan",
+            "Scan",
+            true,
+            look,
+            |s: &mut Shell| {
+                s.begin_xbox_scan();
+            },
+        ));
+    }
+    buttons = buttons.child(dialog_button(
+        "xbox-close",
+        "Close",
+        false,
+        look,
+        |s: &mut Shell| {
+            s.xbox.open = false;
+        },
+    ));
+    form = form.child(buttons);
+    el().key("xbox-dialog")
+        .absolute(0.0, 0.0)
+        .w_full()
+        .h_full()
+        .child(scrim())
+        .child(panel(
+            look,
+            "xbox-dialog",
+            "Import Xbox",
+            true,
+            |s: &mut Shell| {
+                s.xbox.open = false;
             },
             form,
         ))
@@ -2627,7 +3192,7 @@ fn meta_dialog(s: &Shell, look: Look) -> El {
     for (field, label, on) in [
         (
             "text",
-            "Description & details (Steam)",
+            "Description & details (Steam: text, features, scores, links)",
             settings.download_text,
         ),
         ("cover", "Cover", settings.download_cover),
@@ -2690,7 +3255,7 @@ fn meta_dialog(s: &Shell, look: Look) -> El {
     } else {
         form = form.child(section_title(look, "LIBRARY"));
         form = form.child(
-            text("Fetch enabled fields for Steam games and executables you have matched. Existing fields are preserved.")
+            text("Fetch enabled fields for Steam, Epic, Xbox, and matched executables. Existing fields are preserved; tags stay manual.")
                 .font(type_::LABEL)
                 .color(look.muted),
         );
@@ -2804,10 +3369,10 @@ fn meta_key_field(s: &Shell, look: Look) -> El {
 fn meta_game_section(s: &Shell, look: Look, game: &Game, mut form: El) -> El {
     let app_id = metadata::app_id(game);
     form = form.child(section_title(look, "MATCH TITLE"));
-    if matches!(game.target, Target::Executable { .. }) {
+    if !matches!(game.target, Target::Steam { .. }) {
         let query = text_input(&s.meta.query, type_::BODY.lh(20.0))
             .key("meta-query")
-            .label("Match this executable to a Steam title")
+            .label("Match this game to a Steam title for metadata")
             .single_line()
             .w_full()
             .color(look.text)
@@ -2892,7 +3457,7 @@ fn meta_game_section(s: &Shell, look: Look, game: &Game, mut form: El) -> El {
                 )),
         );
         form = form.child(
-            text("Matching only selects a metadata source. Your executable remains the launch target.")
+            text("Matching only selects a metadata source. Your game files and launch target stay unchanged.")
                 .font(type_::LABEL)
                 .color(look.muted),
         );
@@ -3088,6 +3653,16 @@ fn meta_saved(look: Look, game: &Game) -> El {
         ("Developer", m.developers.join(", ")),
         ("Publisher", m.publishers.join(", ")),
         ("Genres", m.genres.join(", ")),
+        ("Features", m.features.join(", ")),
+        ("Age rating", m.age_rating.clone()),
+        (
+            "Critic score",
+            m.critic_score
+                .map(|score| score.to_string())
+                .unwrap_or_default(),
+        ),
+        ("Series", m.series.clone()),
+        ("Tags", m.tags.join(", ")),
     ] {
         if !value.is_empty() {
             details = details.child(
@@ -3096,6 +3671,13 @@ fn meta_saved(look: Look, game: &Game) -> El {
                     .color(look.muted),
             );
         }
+    }
+    for link in &m.links {
+        details = details.child(
+            text(format!("Link: {link}"))
+                .font(type_::LABEL)
+                .color(look.muted),
+        );
     }
     if !m.sources.is_empty() {
         for (field, source) in &m.sources {
@@ -3108,7 +3690,7 @@ fn meta_saved(look: Look, game: &Game) -> El {
     }
     if m.description.is_empty() && m.sources.is_empty() {
         details = details.child(
-            text("No downloaded metadata yet.")
+            text("No downloaded metadata yet. Tags stay manual.")
                 .font(type_::LABEL)
                 .color(look.muted),
         );
@@ -3640,6 +4222,8 @@ fn sidebar(s: &Shell, look: Look) -> El {
     for (key, name, primary) in [
         ("add-game", "＋ Add game", true),
         ("import-steam", "Import Steam", false),
+        ("import-epic", "Import Epic", false),
+        ("import-xbox", "Import Xbox", false),
         ("open-metadata", "Metadata sources", false),
         ("open-workspace", "Customize layout", false),
     ] {
@@ -3681,6 +4265,8 @@ fn sidebar(s: &Shell, look: Look) -> El {
                 .on_press(move |s: &mut Shell| match key {
                     "add-game" => s.open_add(),
                     "import-steam" => s.steam.opened(),
+                    "import-epic" => s.epic.opened(),
+                    "import-xbox" => s.xbox.opened(),
                     "open-metadata" => s.open_meta(None),
                     _ => s.open_workspace(),
                 }),
@@ -3703,6 +4289,8 @@ fn shelf(s: &Shell, look: Look) -> El {
         Filter::Favorites => "Favorites",
         Filter::Pc => "PC",
         Filter::Steam => "Steam",
+        Filter::Epic => "Epic",
+        Filter::Xbox => "Xbox",
         Filter::Hidden => "Hidden",
     };
     let tile = layout.tile_width;
@@ -3929,7 +4517,7 @@ fn list_row(s: &Shell, look: Look, index: usize) -> El {
     let status = match game.installed {
         Some(false) => "Not installed",
         Some(true) => "Installed",
-        None if matches!(game.target, Target::Steam { .. }) => "Not checked",
+        None if !matches!(game.target, Target::Executable { .. }) => "Not checked",
         None => "Executable",
     };
     let status = if game.hidden {
@@ -4251,8 +4839,8 @@ fn modal_cover(s: &Shell, look: Look, game: &Game) -> El {
 }
 
 fn play_button(look: Look, game: &Game) -> El {
-    let action = match (&game.target, game.installed) {
-        (the_launcher::library::Target::Steam { .. }, Some(false)) => "Install",
+    let action = match game.installed {
+        Some(false) => "Install",
         _ => "Play",
     };
     row()
@@ -4356,6 +4944,12 @@ fn meta_summary(look: Look, game: &Game) -> El {
     if !m.genres.is_empty() {
         parts.push(m.genres.join(", "));
     }
+    if !m.features.is_empty() {
+        parts.push(m.features.join(", "));
+    }
+    if let Some(score) = m.critic_score {
+        parts.push(format!("{score}/100"));
+    }
     if !m.developers.is_empty() {
         parts.push(m.developers.join(", "));
     }
@@ -4439,7 +5033,7 @@ fn details_media(look: Look, index: usize, game: &Game) -> El {
     buttons
 }
 
-/// Edit/remove row under the favorite toggle. Steam entries hide or restore
+/// Edit/remove row under the favorite toggle. Store entries hide or restore
 /// instead of editing; hidden entries offer only a restore.
 fn details_manage(look: Look, index: usize, game: &Game) -> El {
     let hidden = game.hidden;
@@ -4521,6 +5115,18 @@ fn badge(label: &str, color: Color) -> El {
 fn target_line(game: &Game) -> String {
     match &game.target {
         the_launcher::library::Target::Steam { app_id } => format!("Steam app {app_id}"),
+        the_launcher::library::Target::Epic {
+            app_name,
+            catalog_namespace,
+            catalog_item_id,
+        } => {
+            if catalog_namespace.is_empty() || catalog_item_id.is_empty() {
+                format!("Epic {app_name}")
+            } else {
+                format!("Epic {app_name} ({catalog_namespace}:{catalog_item_id})")
+            }
+        }
+        the_launcher::library::Target::Xbox { package_id } => format!("Xbox {package_id}"),
         the_launcher::library::Target::Executable { path, .. } => path.display().to_string(),
     }
 }
@@ -4594,15 +5200,18 @@ mod tests {
     #[test]
     fn filtering_combines_collection_and_search() {
         let library = Shell::demo().library;
-        assert_eq!(visible_indices(&library, Filter::All, "").len(), 6);
+        assert_eq!(visible_indices(&library, Filter::All, "").len(), 8);
         assert_eq!(visible_indices(&library, Filter::Favorites, "").len(), 2);
         assert_eq!(visible_indices(&library, Filter::Pc, "").len(), 4);
         assert_eq!(visible_indices(&library, Filter::Steam, "").len(), 2);
+        assert_eq!(visible_indices(&library, Filter::Epic, "").len(), 1);
+        assert_eq!(visible_indices(&library, Filter::Xbox, "").len(), 1);
         assert_eq!(visible_indices(&library, Filter::All, "ember"), vec![2]);
         assert_eq!(
             visible_indices(&library, Filter::Steam, "ember"),
             Vec::<usize>::new()
         );
+        assert_eq!(visible_indices(&library, Filter::Epic, "night"), vec![6]);
         assert_eq!(
             visible_indices(&library, Filter::All, "  STARFALL  ").len(),
             1
@@ -4743,7 +5352,7 @@ mod tests {
             status_text.contains("Could not launch"),
             "launch errors surface: {status_text}"
         );
-        assert_eq!(rt.state.library.games.len(), 6);
+        assert_eq!(rt.state.library.games.len(), 8);
     }
 
     #[test]
@@ -4798,10 +5407,10 @@ mod tests {
         }
         click(&mut rt, "dialog-save");
         assert!(rt.state.draft.is_none(), "a save closes the form");
-        assert_eq!(rt.state.library.games.len(), 7);
+        assert_eq!(rt.state.library.games.len(), 9);
         let saved = Library::load(&dir.path().join("library.json")).unwrap();
-        assert_eq!(saved.games.len(), 7);
-        assert_eq!(saved.games[6].name, "New Game");
+        assert_eq!(saved.games.len(), 9);
+        assert_eq!(saved.games[8].name, "New Game");
         assert_eq!(status_text(&rt), "Game saved to your library");
     }
 
@@ -4822,7 +5431,7 @@ mod tests {
         }
         click(&mut rt, "dialog-save");
         assert!(rt.state.draft.is_some(), "an error keeps the form open");
-        assert_eq!(rt.state.library.games.len(), 6);
+        assert_eq!(rt.state.library.games.len(), 8);
         let error = rt
             .elements()
             .into_iter()
@@ -4850,7 +5459,7 @@ mod tests {
             }
             click(&mut rt, "dialog-save");
         }
-        assert_eq!(rt.state.library.games.len(), 7);
+        assert_eq!(rt.state.library.games.len(), 9);
         assert!(rt.state.draft.is_some(), "the duplicate stays open");
         let error = rt
             .elements()
@@ -4894,10 +5503,10 @@ mod tests {
         click(&mut rt, "details-remove");
         assert!(rt.find("remove-dialog").is_some());
         click(&mut rt, "remove-confirm");
-        assert_eq!(rt.state.library.games.len(), 5);
+        assert_eq!(rt.state.library.games.len(), 7);
         assert!(!rt.state.remove);
         let saved = Library::load(&dir.path().join("library.json")).unwrap();
-        assert_eq!(saved.games.len(), 5);
+        assert_eq!(saved.games.len(), 7);
         assert_eq!(status_text(&rt), "Game removed");
     }
 
@@ -5016,7 +5625,142 @@ mod tests {
         assert!(rt.find("steam-summary").is_some());
         assert!(rt.find("steam-warning-0").is_some());
         assert!(status_text(&rt).contains("Imported 1 Steam games"));
-        assert_eq!(rt.state.library.games.len(), 7);
+        assert_eq!(rt.state.library.games.len(), 9);
+    }
+
+    #[test]
+    fn epic_merge_adds_new_and_preserves_custom_names() {
+        let mut library = Shell::demo().library;
+        let imported = epic::ImportResult {
+            games: vec![
+                epic::EpicGame {
+                    app_name: "NightMarket".into(),
+                    display_name: "Renamed by scan".into(),
+                    install_location: PathBuf::from("C:\\Epic\\NightMarket"),
+                    catalog_namespace: "mm".into(),
+                    catalog_item_id: "001".into(),
+                },
+                epic::EpicGame {
+                    app_name: "FreshEpic".into(),
+                    display_name: "Fresh Epic".into(),
+                    install_location: PathBuf::from("C:\\Epic\\Fresh"),
+                    catalog_namespace: "mm".into(),
+                    catalog_item_id: "002".into(),
+                },
+            ],
+            warnings: vec![],
+        };
+        let added = merge_epic_import(&mut library, &imported).unwrap();
+        assert_eq!(added, 1);
+        // Existing Epic entry keeps its position; clean scans mark it installed.
+        let night = library
+            .games
+            .iter()
+            .find(
+                |g| matches!(&g.target, Target::Epic { app_name, .. } if app_name == "NightMarket"),
+            )
+            .unwrap();
+        assert_eq!(night.installed, Some(true));
+        assert!(library.games.iter().any(|g| g.name == "Fresh Epic"));
+    }
+
+    #[test]
+    fn xbox_merge_adds_new_and_freezes_flags_on_warnings() {
+        let mut library = Shell::demo().library;
+        let imported = xbox::ImportResult {
+            games: vec![xbox::XboxGame {
+                package_id: "Fresh_abc!App".into(),
+                name: "Fresh Xbox".into(),
+                install_location: None,
+            }],
+            warnings: vec![],
+        };
+        let added = merge_xbox_import(&mut library, &imported).unwrap();
+        assert_eq!(added, 1);
+        assert_eq!(library.games.len(), 9);
+        let warned = xbox::ImportResult {
+            games: vec![],
+            warnings: vec!["unreadable package skipped".into()],
+        };
+        let mut library = Shell::demo().library;
+        merge_xbox_import(&mut library, &warned).unwrap();
+        let pixel = library
+            .games
+            .iter()
+            .find(|g| matches!(&g.target, Target::Xbox { .. }))
+            .unwrap();
+        assert_eq!(
+            pixel.installed,
+            Some(true),
+            "warned scans keep installed flags"
+        );
+    }
+
+    #[test]
+    fn epic_and_xbox_scans_surface_errors_without_threads() {
+        // Drive the finished paths directly, like the Steam scan test does,
+        // but without depending on headless click rendering.
+        let mut shell = Shell::demo();
+        shell.meta.settings.automatic = false;
+        shell.epic.opened();
+        assert!(shell.epic.open);
+        shell.begin_epic_scan();
+        assert!(shell.epic.scanning);
+        shell.finish_epic_scan(Err(anyhow::anyhow!("no Epic here")));
+        assert!(!shell.epic.scanning);
+        assert!(shell.epic.error.as_deref().unwrap().contains("no Epic"));
+
+        shell.xbox.opened();
+        assert!(shell.xbox.open);
+        shell.begin_xbox_scan();
+        assert!(shell.xbox.scanning);
+        shell.finish_xbox_scan(Err(anyhow::anyhow!("no Xbox here")));
+        assert!(!shell.xbox.scanning);
+        assert!(shell.xbox.error.as_deref().unwrap().contains("no Xbox"));
+
+        // Successful empty scans still merge (zero added) and reselect.
+        let mut shell = Shell::demo();
+        shell.meta.settings.automatic = false;
+        shell.finish_epic_scan(Ok(epic::ImportResult::default()));
+        assert!(
+            shell
+                .epic
+                .summary
+                .as_deref()
+                .unwrap()
+                .contains("Imported 0 Epic")
+        );
+        shell.finish_xbox_scan(Ok(xbox::ImportResult::default()));
+        assert!(
+            shell
+                .xbox
+                .summary
+                .as_deref()
+                .unwrap()
+                .contains("Imported 0 Xbox")
+        );
+    }
+
+    #[test]
+    fn store_games_hide_instead_of_removing() {
+        let mut shell = Shell::demo();
+        // Epic entry hides via the same path the remove dialog uses.
+        shell.selected = Some(6);
+        assert!(shell.library.games[6].hides_instead_of_removing());
+        shell.confirm_remove();
+        assert!(shell.library.games[6].hidden);
+        assert_eq!(shell.notice.as_deref(), Some("Game hidden"));
+        // Xbox entry hides as well.
+        shell.selected = Some(7);
+        assert!(shell.library.games[7].hides_instead_of_removing());
+        shell.confirm_remove();
+        assert!(shell.library.games[7].hidden);
+        // Executables still remove.
+        shell.selected = Some(0);
+        assert!(!shell.library.games[0].hides_instead_of_removing());
+        shell.confirm_remove();
+        assert_eq!(shell.library.games.len(), 7);
+        assert_eq!(shell.notice.as_deref(), Some("Game removed"));
     }
 
     fn png_fixture(dir: &std::path::Path, name: &str, width: u32, height: u32) -> PathBuf {
@@ -5043,7 +5787,7 @@ mod tests {
             .map(|e| e.rect)
             .collect();
         cards.sort_by(|a, b| a[0].partial_cmp(&b[0]).unwrap());
-        assert_eq!(cards.len(), 6, "all demo games render a card");
+        assert_eq!(cards.len(), 8, "all demo games render a card");
         let centers: Vec<i64> = cards.iter().map(|r| (r[0] + r[2] / 2.0) as i64).collect();
         let distinct = {
             let mut sorted = centers.clone();
@@ -5245,11 +5989,17 @@ mod tests {
     fn maybe_automatic_skips_complete_libraries() {
         let (_dir, mut rt) = library_harness();
         rt.state.meta.settings.automatic = true;
+        // Epic/Xbox demo entries have no Steam identity, so they never start
+        // a fetch; Steam/PC entries need every auto-filled field present.
         for game in rt.state.library.games.iter_mut() {
             game.metadata.description = "x".into();
             game.metadata.developers = vec!["d".into()];
             game.metadata.publishers = vec!["p".into()];
             game.metadata.genres = vec!["g".into()];
+            game.metadata.features = vec!["f".into()];
+            game.metadata.links = vec!["https://example.test".into()];
+            game.metadata.age_rating = "18+".into();
+            game.metadata.critic_score = Some(80);
             game.metadata.release_date = "2020".into();
             game.cover = Some(PathBuf::from("x.png"));
             game.metadata.background = Some(PathBuf::from("y.png"));

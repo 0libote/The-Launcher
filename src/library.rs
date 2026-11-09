@@ -17,6 +17,16 @@ pub enum Target {
     Steam {
         app_id: u32,
     },
+    Epic {
+        app_name: String,
+        #[serde(default)]
+        catalog_namespace: String,
+        #[serde(default)]
+        catalog_item_id: String,
+    },
+    Xbox {
+        package_id: String,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -42,7 +52,14 @@ impl Game {
         match self.target {
             Target::Executable { .. } => "PC",
             Target::Steam { .. } => "Steam",
+            Target::Epic { .. } => "Epic",
+            Target::Xbox { .. } => "Xbox",
         }
+    }
+
+    /// Store-backed entries hide instead of deleting, like Steam does today.
+    pub fn hides_instead_of_removing(&self) -> bool {
+        !self.hidden && !matches!(self.target, Target::Executable { .. })
     }
 }
 
@@ -126,6 +143,12 @@ impl Library {
 fn same_target(a: &Target, b: &Target) -> bool {
     match (a, b) {
         (Target::Steam { app_id: a }, Target::Steam { app_id: b }) => a == b,
+        (Target::Epic { app_name: a, .. }, Target::Epic { app_name: b, .. }) => {
+            a.eq_ignore_ascii_case(b)
+        }
+        (Target::Xbox { package_id: a }, Target::Xbox { package_id: b }) => {
+            a.eq_ignore_ascii_case(b)
+        }
         (Target::Executable { path: a, .. }, Target::Executable { path: b, .. }) => {
             if cfg!(windows) {
                 a.to_string_lossy()
@@ -143,6 +166,14 @@ pub fn validate_game(game: &Game) -> Result<()> {
     }
     match &game.target {
         Target::Steam { app_id: 0 } => bail!("Steam app ID must be positive"),
+        Target::Epic {
+            app_name,
+            catalog_namespace: _,
+            catalog_item_id: _,
+        } if app_name.trim().is_empty() => bail!("Epic app name must not be empty"),
+        Target::Xbox { package_id } if package_id.trim().is_empty() => {
+            bail!("Xbox package ID must not be empty")
+        }
         Target::Executable { path, .. } if !path.is_absolute() => {
             bail!("Executable path must be absolute")
         }
@@ -213,5 +244,75 @@ mod tests {
             })
             .unwrap();
         assert!(Library::load(&path).unwrap().games[0].hidden);
+    }
+    #[test]
+    fn epic_and_xbox_targets_validate_dedupe_and_round_trip() {
+        let epic = |app: &str| Game {
+            metadata: Default::default(),
+            name: "Epic game".into(),
+            target: Target::Epic {
+                app_name: app.into(),
+                catalog_namespace: "fn".into(),
+                catalog_item_id: "abc".into(),
+            },
+            favorite: false,
+            last_launched: None,
+            cover: None,
+            installed: Some(true),
+            hidden: false,
+        };
+        let xbox = |package: &str| Game {
+            metadata: Default::default(),
+            name: "Xbox game".into(),
+            target: Target::Xbox {
+                package_id: package.into(),
+            },
+            favorite: false,
+            last_launched: None,
+            cover: None,
+            installed: Some(true),
+            hidden: false,
+        };
+        assert_eq!(epic("Fortnite").source(), "Epic");
+        assert_eq!(xbox("Fam!App").source(), "Xbox");
+        assert!(epic("Fortnite").hides_instead_of_removing());
+        assert!(xbox("Fam!App").hides_instead_of_removing());
+        assert!(same_target(
+            &epic("Fortnite").target,
+            &epic("fortnite").target
+        ));
+        assert!(same_target(
+            &xbox("Fam!App").target,
+            &xbox("fam!app").target
+        ));
+        assert!(!same_target(&epic("A").target, &xbox("A!App").target));
+        assert!(validate_game(&epic(" ")).is_err());
+        assert!(
+            validate_game(&xbox("no-bang")).is_ok(),
+            "shape checked at launch, not load"
+        );
+        assert!(validate_game(&xbox(" ")).is_err());
+
+        // Legacy libraries without the new targets or metadata fields load.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("library.json");
+        fs::write(
+            &path,
+            r#"{"schema_version":1,"games":[{"name":"Legacy","target":{"kind":"steam","app_id":42},"metadata":{"description":"kept"}}]}"#,
+        )
+        .unwrap();
+        let library = Library::load(&path).unwrap();
+        assert_eq!(library.games[0].metadata.description, "kept");
+        assert!(library.games[0].metadata.features.is_empty());
+
+        // New targets persist.
+        let mut library = Library::default();
+        library.add(epic("Fortnite")).unwrap();
+        library.add(xbox("Fam!App")).unwrap();
+        assert!(library.add(epic("FORTNITE")).is_err());
+        library.save(&path).unwrap();
+        let reloaded = Library::load(&path).unwrap();
+        assert_eq!(reloaded.games.len(), 2);
+        assert_eq!(reloaded, library);
     }
 }

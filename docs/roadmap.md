@@ -4,13 +4,13 @@ This is a direction, not a release promise. Finish and validate each slice befor
 
 ## Foundation — implemented, Windows validation remains
 
-Native Rust library UI; manual executable entries and launch options; safe direct process launching; local persistence; favorites and search; source filters; installed Steam import and URI launching; setup, architecture, and data documentation.
+Native Rust library UI; manual executable entries and launch options; safe direct process launching; local persistence; favorites and search; source filters; installed Steam/Epic/Xbox imports and protocol-handler launching; setup, architecture, and data documentation.
 
 ## User-owned presentation — implemented foundation
 
 Visual layout editor with panel docking, grid/list/shelf views, sizes, colors, named layouts, atomic Save/Cancel, and a launcher-owned frame. See `customization.md` for the supported regions and current limits.
 
-Steam now follows the registry/manifests plus optional Web API account-import approach examined in Playnite. Browser login, family sharing, and session/install watchers remain future work.
+Steam now follows the registry/manifests plus optional Web API account-import approach examined in Playnite. Epic follows the local `.item` manifests approach; Xbox follows the installed UWP packages approach. Browser/account logins, family sharing, console catalogs, playtime sync, and session/install watchers remain future work.
 
 ## Next: make it pleasant to use daily
 
@@ -24,11 +24,11 @@ Steam now follows the registry/manifests plus optional Web API account-import ap
 
 ## Then: deepen the shelf
 
-Explore 3D cases or a spatial shelf, optional sound and motion with off switches, richer metadata-driven collections, and expanded built-in providers. Prototype the interaction and performance before committing the entire UI to a 3D renderer. Preserve a usable low-motion path.
+Explore 3D cases or a spatial shelf, optional sound and motion with off switches, richer metadata-driven collections (using the new features/tags/scores fields), and expanded built-in providers. Prototype the interaction and performance before committing the entire UI to a 3D renderer. Preserve a usable low-motion path.
 
 ## Later: broaden the library
 
-Consider other storefronts, emulators and ROM launch profiles, portable mode, robust play-session tracking, and an extension model only after multiple real integrations expose a repeated boundary. Online accounts, cloud sync, remote play, achievements, and a plugin marketplace are not foundation requirements.
+Consider emulators and ROM launch profiles, GOG/itch.io scans, portable mode, robust play-session tracking, and an extension model only after multiple real integrations expose a repeated boundary. Online accounts, cloud sync, remote play, achievements, and a plugin marketplace are not foundation requirements.
 
 ## Release gates
 
@@ -36,6 +36,6 @@ Choose a project license. Test Windows graphics drivers, DPI, accessibility, nat
 
 ## Built-in metadata foundation (implemented)
 
-Steam descriptions/credits/genres/release dates, automatic fill after import or confirmed matching, official cover/background/logo downloads, optional SteamGridDB artwork preference with Steam fallback, individual image previews/selections, source attribution, offline PNG cache, and preservation-aware background results. See [metadata](metadata.md) for current limits.
+Steam descriptions/credits/genres/features/links/age ratings/critic scores/release dates, automatic fill after import or confirmed matching (Steam, Epic, Xbox, and executables via Steam matching), official cover/background/logo downloads, optional SteamGridDB artwork preference with Steam fallback, individual image previews/selections, source attribution, offline PNG cache, manual-only tags/series, and preservation-aware background results. See [metadata](metadata.md) for current limits.
 
 Next metadata work: another real catalogue for games outside Steam (evaluate IGDB authentication/licensing), per-field provider priorities, manual text editing and metadata-driven filters, non-Steam artwork identities, credential storage through the OS, cache quotas/cleanup, and icons/screenshots. Dynamic extensions should follow working provider contracts rather than become a prerequisite for everyday metadata.
