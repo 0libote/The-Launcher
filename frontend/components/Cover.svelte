@@ -11,6 +11,13 @@
   let failed = $state(false);
   let element = $state<HTMLDivElement>();
   let localUrl = $state<string | null>(null);
+  // Demo entries hotlink public store artwork; real libraries resolve local
+  // art through the desktop thumbnail queue below.
+  const remote = $derived(
+    game.cover?.startsWith('http://') || game.cover?.startsWith('https://')
+      ? game.cover
+      : null,
+  );
   $effect(() => {
     const path = game.cover;
     const node = element;
@@ -48,8 +55,8 @@
   class="cover art-{artSeed(game.name)}"
   class:compact
 >
-  {#if (url || localUrl) && !failed}<img
-      src={url || localUrl || ''}
+  {#if (url || localUrl || remote) && !failed}<img
+      src={url || localUrl || remote || ''}
       alt=""
       loading="lazy"
       decoding="async"

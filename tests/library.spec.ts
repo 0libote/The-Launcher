@@ -4,10 +4,10 @@ test('browse, search, favorite, hide, and restore entries', async ({
 }) => {
   await page.goto('/?demo');
   await expect(page.locator('.game-card')).toHaveCount(12);
-  await page.getByRole('textbox', { name: 'Search games' }).fill('astral');
+  await page.getByRole('textbox', { name: 'Search games' }).fill('portal');
   await expect(page.locator('.game-card')).toHaveCount(1);
   await page
-    .getByRole('button', { name: 'Astral Voyager', exact: true })
+    .getByRole('button', { name: 'Portal 2', exact: true })
     .click();
   await page
     .getByRole('button', { name: 'Remove from favorites', exact: true })
@@ -23,19 +23,19 @@ test('browse, search, favorite, hide, and restore entries', async ({
   ).toBeVisible();
   await page.getByRole('button', { name: /^Hidden games/ }).click();
   await page
-    .getByRole('button', { name: 'Astral Voyager', exact: true })
+    .getByRole('button', { name: 'Portal 2', exact: true })
     .click();
   await page
     .getByRole('button', { name: 'Restore to library', exact: true })
     .click();
   await page.getByRole('button', { name: /^All games/ }).click();
   await expect(
-    page.getByRole('button', { name: 'Astral Voyager', exact: true }),
+    page.getByRole('button', { name: 'Portal 2', exact: true }),
   ).toBeVisible();
   await page.reload();
   await expect(
     page.getByRole('button', {
-      name: 'Unfavorite Astral Voyager',
+      name: 'Unfavorite Portal 2',
       exact: true,
     }),
   ).toHaveCount(0);
@@ -100,7 +100,7 @@ test('mobile navigation and dialogs fit the viewport', async ({ page }) => {
     page.getByRole('heading', { name: 'Favorites', exact: true }),
   ).toBeVisible();
   await page
-    .getByRole('button', { name: 'Astral Voyager', exact: true })
+    .getByRole('button', { name: 'Portal 2', exact: true })
     .click();
   await expect(
     page.getByRole('button', { name: 'Play game', exact: true }),
@@ -119,7 +119,7 @@ test('demo launch errors are actionable and do not update played timestamps', as
   page,
 }) => {
   await page.goto('/?demo');
-  await page.getByRole('button', { name: 'Wildwood', exact: true }).click();
+  await page.getByRole('button', { name: 'Hades', exact: true }).click();
   await page.getByRole('button', { name: 'Play game', exact: true }).click();
   await page.keyboard.press('Escape');
   await expect(page.getByRole('alert')).toContainText(
@@ -134,13 +134,13 @@ test('large collections reveal batches and search beyond the first batch', async
   await expect(page.locator('.game-card')).toHaveCount(80);
   await page
     .getByRole('textbox', { name: 'Search games' })
-    .fill('The Quiet Mountain 4992');
+    .fill('Halo Infinite 4992');
   await expect(page.locator('.game-card')).toHaveCount(1);
   await page
-    .getByRole('button', { name: 'The Quiet Mountain 4992', exact: true })
+    .getByRole('button', { name: 'Halo Infinite 4992', exact: true })
     .click();
   await expect(
-    page.getByRole('heading', { name: 'The Quiet Mountain 4992', exact: true }),
+    page.getByRole('heading', { name: 'Halo Infinite 4992', exact: true }),
   ).toBeVisible();
 });
 

@@ -15,7 +15,7 @@ A personal game shelf with a Svelte 5 / TypeScript interface and a Tauri 2 / Rus
 - Export and restore a validated backup of library entries, workspace, and metadata preferences. Game files and artwork files are not included.
 - Browse with keyboard controls, a controller, or the mouse. The responsive browser layout prepares the interface for a later mobile catalogue; it is not a server implementation.
 
-Real libraries start empty. Synthetic games appear only in the explicit browser demo. The app uses bundled fonts; no remote font service or art is required to browse offline.
+Real libraries start empty. The explicit browser demo shows a catalogue of real store games with hotlinked artwork; demo edits stay in that tab. The app uses bundled fonts; no remote font service or art is required to browse offline.
 
 ## Develop
 

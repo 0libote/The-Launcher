@@ -71,7 +71,7 @@ test('desktop screens send supported commands and apply returned library state',
   );
   await page.goto('/');
   await page
-    .getByRole('button', { name: 'Astral Voyager', exact: true })
+    .getByRole('button', { name: 'Terraria', exact: true })
     .click();
   await page
     .getByRole('button', { name: 'Remove from favorites', exact: true })
@@ -138,14 +138,14 @@ test('desktop screens send supported commands and apply returned library state',
     expect(registered).toContain(`desktop::${call.name},`);
   expect(
     calls.find((call) => call.name === 'library_set_favorite')?.args,
-  ).toEqual({ handle: 'exe:/demo/game-0', favorite: false });
+  ).toEqual({ handle: 'exe:/demo/terraria', favorite: false });
   expect(
     calls.find((call) => call.name === 'library_save_game')?.args.original,
-  ).toBe('exe:/demo/game-0');
+  ).toBe('exe:/demo/terraria');
   expect(
     calls.find((call) => call.name === 'metadata_fetch')?.args.input,
-  ).toMatchObject({ handle: 'exe:/demo/game-0', app_id: 620, replace: false });
+  ).toMatchObject({ handle: 'exe:/demo/terraria', app_id: 620, replace: false });
   expect(calls.find((call) => call.name === 'game_launch')?.args.handle).toBe(
-    'exe:/demo/game-0',
+    'exe:/demo/terraria',
   );
 });

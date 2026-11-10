@@ -5,7 +5,7 @@ test('library and game details have no serious accessibility violations', async 
 }) => {
   await page.goto('/?demo');
   await page
-    .getByRole('button', { name: 'Astral Voyager', exact: true })
+    .getByRole('button', { name: 'Portal 2', exact: true })
     .waitFor();
   const library = await new AxeBuilder({ page }).analyze();
   expect(
@@ -15,7 +15,7 @@ test('library and game details have no serious accessibility violations', async 
     JSON.stringify(library.violations),
   ).toEqual([]);
   await page
-    .getByRole('button', { name: 'Astral Voyager', exact: true })
+    .getByRole('button', { name: 'Portal 2', exact: true })
     .click();
   const details = await new AxeBuilder({ page }).analyze();
   expect(

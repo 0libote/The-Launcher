@@ -12,7 +12,7 @@ const page = await browser.newPage({
 page.on('pageerror', (error) => console.error('PAGE ERROR:', error.message));
 await page.goto('http://localhost:1420/?demo');
 await page
-  .getByRole('button', { name: 'Astral Voyager', exact: true })
+  .getByRole('button', { name: 'Portal 2', exact: true })
   .waitFor();
 await page.evaluate(() => document.fonts.ready);
 await mkdir('docs/screenshots/rewrite', { recursive: true });
@@ -20,29 +20,34 @@ await page.screenshot({
   path: 'docs/screenshots/rewrite/library-grid.png',
   fullPage: false,
 });
-await page.getByRole('button', { name: 'Astral Voyager', exact: true }).click();
+await page.getByRole('button', { name: 'Portal 2', exact: true }).click();
+await page.getByRole('dialog').waitFor();
 await page.screenshot({
   path: 'docs/screenshots/rewrite/game-details.png',
   fullPage: false,
 });
 await page.keyboard.press('Escape');
 await page.getByRole('button', { name: 'Shelf view', exact: true }).click();
+await page.locator('.games.shelf-view').waitFor();
 await page.screenshot({
   path: 'docs/screenshots/rewrite/library-shelf.png',
   fullPage: false,
 });
 await page.getByRole('button', { name: 'List view', exact: true }).click();
+await page.locator('.games.list-view').waitFor();
 await page.screenshot({
   path: 'docs/screenshots/rewrite/library-list.png',
   fullPage: false,
 });
 await page.getByRole('button', { name: 'Preferences', exact: true }).click();
+await page.getByRole('dialog').waitFor();
 await page.screenshot({
   path: 'docs/screenshots/rewrite/preferences.png',
   fullPage: false,
 });
 await page.keyboard.press('Escape');
 await page.getByRole('button', { name: 'Add game', exact: true }).click();
+await page.getByRole('dialog').waitFor();
 await page.screenshot({
   path: 'docs/screenshots/rewrite/add-game.png',
   fullPage: false,
@@ -58,7 +63,7 @@ await page.screenshot({
 });
 await page.goto('http://localhost:1420/?demo');
 await page
-  .getByRole('button', { name: 'Astral Voyager', exact: true })
+  .getByRole('button', { name: 'Portal 2', exact: true })
   .waitFor();
 await page.setViewportSize({ width: 390, height: 844 });
 await page.screenshot({
@@ -75,14 +80,14 @@ await dark.addInitScript(() => {
 dark.on('pageerror', (error) => console.error('PAGE ERROR:', error.message));
 await dark.goto('http://localhost:1420/?demo');
 await dark
-  .getByRole('button', { name: 'Astral Voyager', exact: true })
+  .getByRole('button', { name: 'Portal 2', exact: true })
   .waitFor();
 await dark.evaluate(() => document.fonts.ready);
 await dark.screenshot({
   path: 'docs/screenshots/rewrite/library-grid-dark.png',
   fullPage: false,
 });
-await dark.getByRole('button', { name: 'Astral Voyager', exact: true }).click();
+await dark.getByRole('button', { name: 'Portal 2', exact: true }).click();
 await dark.screenshot({
   path: 'docs/screenshots/rewrite/game-details-dark.png',
   fullPage: false,

@@ -10,12 +10,14 @@
     close,
     children,
     wide = false,
+    page = false,
     error = '',
   }: {
     title: string;
     close: () => void;
     children: Snippet;
     wide?: boolean;
+    page?: boolean;
     error?: string;
   } = $props();
 </script>
@@ -28,7 +30,7 @@
 >
   <Dialog.Portal>
     <Dialog.Overlay class="dialog-overlay" />
-    <Dialog.Content class={cn('dialog-panel', wide && 'wide')}>
+    <Dialog.Content class={cn('dialog-panel', wide && 'wide', page && 'page')}>
       <div class="modal-heading">
         <Dialog.Title class="modal-title">{title}</Dialog.Title>
         <Button variant="icon" onclick={close} aria-label="Close dialog"

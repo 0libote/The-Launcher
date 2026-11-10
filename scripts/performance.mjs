@@ -16,19 +16,19 @@ for (const count of [100, 1000, 5000]) {
     const page = await context.newPage();
     await page.goto(`${baseURL}/?demo&count=${count}`);
     await page
-      .getByRole('button', { name: 'Astral Voyager', exact: true })
+      .getByRole('button', { name: 'Terraria', exact: true })
       .waitFor();
     await page.evaluate(() => document.fonts.ready);
     const readyMs = await page.evaluate(() => performance.now());
     const started = performance.now();
     await page
       .getByRole('textbox', { name: 'Search games' })
-      .fill('Quiet Mountain');
+      .fill('Witcher');
     await page.waitForFunction(
       () =>
         document.querySelectorAll('.game-card').length > 0 &&
         [...document.querySelectorAll('.game-name')].every((el) =>
-          el.textContent.includes('Quiet Mountain'),
+          el.textContent.includes('Witcher'),
         ),
     );
     const searchMs = performance.now() - started;
@@ -70,7 +70,7 @@ const report = {
     host: 'Shared host; background load and caches vary',
   },
   environment:
-    'Headless Chromium on Linux; production Vite assets over localhost. Synthetic games, generated covers. Not native Tauri or Windows. Ready includes navigation, UI and fonts; search includes automation overhead. Heap is JS only; idle is renderer TaskDuration over five seconds after a one-second settling period.',
+    'Headless Chromium on Linux; production Vite assets over localhost. Demo catalogue games with remote covers. Not native Tauri or Windows. Ready includes navigation, UI and fonts; search includes automation overhead. Heap is JS only; idle is renderer TaskDuration over five seconds after a one-second settling period.',
   assets,
   results,
 };

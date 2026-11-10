@@ -3,6 +3,8 @@
 Open **Preferences → Appearance** to change the shell. Changes preview across the library and dialogs; **Save preferences** persists the workspace, and **Cancel** restores the previous appearance.
 
 - Choose grid, list, or shelf view. Shelf uses a wrapped grid of case-like covers with a shelf edge, not a 3D renderer.
+- Drag the cover-size slider in the toolbar for quick zoom (Playnite-style); the full range stays in Preferences.
+- Collapse the navigation rail with the top-left toggle; on phones the same button opens the drawer.
 - Place navigation on the left/right or hide it; the top-left navigation toggle can reopen it. On phones navigation becomes a drawer.
 - Open game details in a dialog or side panel. **Open on request** retains the dialog without a persistent side panel; selecting a game always makes its actions available.
 - Put the search/view toolbar above or below the collection.

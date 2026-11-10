@@ -1,14 +1,14 @@
 # Visual design
 
-The shelf takes its cues from physical game cases and console collection screens. Artwork carries the personality; navigation and controls stay quiet. The Svelte interface uses bundled Manrope for controls and Oxanium for headings and original generated cover typography. No remote fonts are loaded.
+The shelf takes its cues from Steam first, then Playnite, Epic, and Xbox: a dark-first library with a quiet sidebar, a continue-playing rail of recent games, artwork-led cards with hover Play/Details actions, and a game page with a banner hero, a primary Play action, stat tiles, and grouped management actions. The Svelte interface uses the system font stack for controls and headings. No remote fonts are loaded.
 
 ## Palette
 
-The retained midnight canvas (`#101420`), navigation (`#151a28`), and slate surfaces (`#1d2333`, `#262e40`) frame ivory text (`#f3f0e8`). Coral (`#ff977c`) marks Add/Play actions; mint (`#9fdecc`) marks selection and keyboard focus. All ten workspace skin fields drive CSS custom properties, including dialogs. Cover-art palettes are deliberately independent of the workspace skin.
+The default workspace is dark-first (`#09090b` canvas, `#101013` navigation, `#141417`/`#1f1f24` surfaces, `#fafafa` text) with a pink accent (`#f472b6` dark, `#db2777` light) for Add/Play actions, selection, and keyboard focus. First launch defaults to the dark appearance; light and system themes stay one click away in the top bar. All ten workspace skin fields drive CSS custom properties, including dialogs. Cover-art palettes are deliberately independent of the workspace skin.
 
 ## Composition and behavior
 
-A compact navigation rail holds real collection counts, favorites/recent entries, stores, hidden games, and preferences. The main collection has a clear heading, search, sorting, installed filter, and view switch. Cards prioritize art and keep names readable. Details open in a focus-trapped native HTML dialog or a side panel. Screens adapt down to 320 CSS pixels; mobile support is a UI foundation, not a shipped mobile sync service.
+A compact navigation rail holds real collection counts, favorites/recent entries, stores, hidden games, and preferences. The top-left toggle collapses the rail on desktop and opens the drawer on phones. The main collection opens with a continue-playing rail of recent games, then a clear heading, search, sorting, installed filter, cover-size zoom, and view switch. Cards prioritize art and keep names readable; hovering a card reveals Play and Details shortcuts. Details open as a Steam-style game page (banner hero, cover plus title, Play action, stat tiles, about and management sections) in a focus-trapped native HTML dialog or a side panel, and the side panel follows keyboard and controller browsing. Screens adapt down to 320 CSS pixels; mobile support is a UI foundation, not a shipped mobile sync service.
 
 Grid wraps portrait covers. Shelf adds case depth and a visible shelf edge without a 3D engine. List uses compact rows. Cards progressively render in batches of 80; scrolling or Show more reveals further entries. Keyboard navigation reveals its next batch automatically.
 
@@ -20,4 +20,4 @@ Keyboard users can use Tab, arrows, Enter/Space, Escape, `/`, and Ctrl/Cmd+K. Se
 
 ## Captures
 
-The images in `screenshots/rewrite/` capture the implemented Svelte screens using synthetic games and original generated artwork in the explicit browser demo. They are not native Windows captures. The older PNG files outside that directory are historical Rune captures and no longer represent the implementation.
+The images in `screenshots/rewrite/` capture the implemented Svelte screens using a demo catalogue of real store games with hotlinked Steam CDN artwork in the explicit browser demo. Fortnite and Halo Infinite intentionally show the generated fallback covers. They are not native Windows captures. The older PNG files outside that directory are historical Rune captures and no longer represent the implementation.

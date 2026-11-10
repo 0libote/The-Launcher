@@ -14,7 +14,7 @@ describe('library browsing', () => {
     games[0].hidden = true;
     const original = games.map(identity);
     expect(filterGames(games, 'All games', '', 'name')).toHaveLength(11);
-    expect(filterGames(games, 'Hidden', 'astral', 'name')).toEqual([games[0]]);
+    expect(filterGames(games, 'Hidden', 'terra', 'name')).toEqual([games[0]]);
     expect(filterGames(games, 'Favorites', 'RPG', 'name', true)).toHaveLength(
       0,
     );

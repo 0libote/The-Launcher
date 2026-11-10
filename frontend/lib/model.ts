@@ -148,7 +148,8 @@ export const t3DarkSkin = (): Skin => ({
   raised: [31, 31, 36],
   text: [250, 250, 250],
   muted: [161, 161, 170],
-  faint: [113, 113, 122],
+  // #8a8a93 keeps secondary text at 4.5:1 on the dark canvas and rail.
+  faint: [138, 138, 147],
   line: [38, 38, 43],
   accent: [244, 114, 182],
   selection: [244, 114, 182],
@@ -169,7 +170,9 @@ export const defaultWorkspace = (): Workspace => ({
         details_width: 300,
         show_shortcuts: true,
       },
-      skin: t3LightSkin(),
+      // Dark-first like Steam/Playnite; the shell migrates this with the
+      // active appearance on first load.
+      skin: t3DarkSkin(),
     },
   ],
 });

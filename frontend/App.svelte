@@ -39,10 +39,12 @@
   let workspace = $state(defaultWorkspace());
   let previewWorkspace = $state<Workspace | null>(null);
   let settings = $state(defaultSettings());
+  // Dark-first like Steam/Playnite: game libraries read best on a dark
+  // canvas. Users can still pick light or system from the top bar.
   let appearance = $state<Appearance>(
     typeof localStorage !== 'undefined'
-      ? (localStorage.getItem('launcher-appearance') as Appearance) || 'system'
-      : 'system',
+      ? (localStorage.getItem('launcher-appearance') as Appearance) || 'dark'
+      : 'dark',
   );
   const systemDark = () =>
     typeof window !== 'undefined' &&
@@ -187,6 +189,8 @@
     workspace = snapshot.workspace;
     settings = snapshot.settings;
     dataPath = snapshot.data_path;
+    const nav = workspace.layouts[workspace.active]?.layout.navigation;
+    if (nav === 'left' || nav === 'right') prevNav = nav;
     if (snapshot.warnings?.length) warnings = snapshot.warnings;
   }
   let reloadGeneration = 0;
@@ -298,6 +302,53 @@
         }
       });
   }
+  async function persistWorkspace(before: Workspace) {
+    if (demo) return;
+    await task(async () => {
+      try {
+        await command('save_workspace', {
+          workspace: $state.snapshot(workspace),
+        });
+      } catch (e) {
+        workspace = before;
+        throw e;
+      }
+    });
+  }
+  let prevNav = $state<'left' | 'right'>('left');
+  // Sidebar collapse like Steam/Playnite. On phones this opens the drawer;
+  // on desktop it hides the rail and restores the previous side.
+  async function toggleNav() {
+    if (
+      typeof window !== 'undefined' &&
+      window.matchMedia?.('(max-width: 600px)').matches
+    ) {
+      mobileNav = !mobileNav;
+      return;
+    }
+    const before = $state.snapshot(workspace);
+    if (active.layout.navigation === 'hidden') {
+      active.layout.navigation = prevNav;
+    } else {
+      prevNav = active.layout.navigation;
+      active.layout.navigation = 'hidden';
+    }
+    mobileNav = false;
+    await persistWorkspace(before);
+  }
+  function setTileWidth(width: number) {
+    active.layout.tile_width = Math.min(320, Math.max(130, Math.round(width)));
+  }
+  async function saveTileWidth() {
+    await persistWorkspace($state.snapshot(workspace));
+  }
+  // Steam-style continue strip: recent games above the All games grid.
+  // Hero buttons carry their own labels so grid card names stay unique.
+  const continuePlaying = $derived(
+    collection === 'All games' && !query.trim() && !installedOnly
+      ? filterGames(library.games, 'Recently played', '', 'recent').slice(0, 5)
+      : [],
+  );
   async function importGames() {
     const generation = modalGeneration;
     await task(async () => {
@@ -318,6 +369,9 @@
   }
   let stopMetadata = false;
   let metadataRunning = $state(false);
+  const notice = $derived(
+    error || (pending > 0 && !metadataRunning ? 'Working…' : status),
+  );
   const metadataQueue: Game[] = [];
   async function automaticMetadata(games: Game[]) {
     const queued = new Set(metadataQueue.map(identity));
@@ -527,7 +581,12 @@
         !target.closest('.game-card'))
     )
       return;
-    if (!visible.length || detailsOpen) return;
+    if (!visible.length) return;
+    // A Playnite-style open side panel follows keyboard/controller browsing;
+    // a modal details dialog keeps focus until it closes.
+    const browsingPanel =
+      detailsOpen && !modal && active.layout.details === 'right';
+    if (detailsOpen && !browsingPanel) return;
     if (
       ['ArrowRight', 'ArrowLeft', 'ArrowDown', 'ArrowUp'].includes(event.key)
     ) {
@@ -733,8 +792,10 @@
       <Button
         variant="icon"
         class="nav-toggle"
-        onclick={() => (mobileNav = !mobileNav)}
-        aria-label="Toggle navigation"><Icon name="library" /></Button
+        onclick={toggleNav}
+        aria-label="Toggle navigation"
+        aria-expanded={active.layout.navigation !== 'hidden' || mobileNav}
+        ><Icon name="library" /></Button
       >
       <div class="breadcrumb">
         Your collection <span>/</span> <strong>{collection}</strong>
@@ -802,6 +863,34 @@
             >{visible.length} {visible.length === 1 ? 'game' : 'games'}</span
           >
         </div>
+        {#if continuePlaying.length}<section
+            class="continue-rail"
+            aria-label="Continue playing"
+          >
+            <div class="continue-head">
+              <h2>Continue playing</h2>
+              <span class="muted">Jump back in where you left off</span>
+            </div>
+            <div class="continue-cards">
+              {#each continuePlaying as game (identity(game))}<div
+                  class="hero-card"
+                >
+                  <button
+                    class="hero-main"
+                    onclick={() => chooseGame(game)}
+                    ><Cover {game} url={coverUrl(game)} /><span
+                      class="hero-name"
+                      aria-hidden="true">{game.name}</span
+                    ><span class="sr-only">{game.name}: open details</span></button
+                  ><button
+                    class="hero-play"
+                    onclick={() => play(game)}
+                    aria-label={`Play ${game.name}`}
+                    ><Icon name="play" size={16} /></button
+                  >
+                </div>{/each}
+            </div>
+          </section>{/if}
         <div
           class="library-controls"
           class:controls-bottom={active.layout.tools === 'bottom'}
@@ -831,6 +920,18 @@
                   >Recently played</option
                 ><option value="added">Recently added</option></select
               ></label
+            ><label class="density-control"
+              ><span class="sr-only">Cover size</span><input
+                type="range"
+                min="130"
+                max="320"
+                step="10"
+                value={active.layout.tile_width}
+                oninput={(event) =>
+                  setTileWidth(Number(event.currentTarget.value))}
+                onchange={saveTileWidth}
+                aria-label="Cover size"
+              /></label
             >
             <div class="view-switch" aria-label="Library view">
               {#each [{ value: 'grid', icon: 'grid', label: 'Grid view' }, { value: 'shelf', icon: 'shelf', label: 'Shelf view' }, { value: 'list', icon: 'list', label: 'List view' }] as option}<button
@@ -910,7 +1011,10 @@
                       >{source(game)}{view === 'list'
                         ? ` / ${game.metadata.genres[0] || 'Game'}`
                         : ''}</span
-                    >
+                    >{#if view !== 'list' && game.metadata.genres[0]}<span
+                        class="game-meta"
+                        aria-hidden="true">{game.metadata.genres[0]}</span
+                      >{/if}
                   </div>
                   {#if view === 'list'}<span
                       class="list-last-played"
@@ -933,7 +1037,19 @@
                   onclick={() =>
                     task(() => updateGame(game, { favorite: !game.favorite }))}
                   ><Icon name="heart" size={16} /></button
-                >
+                ><div class="card-actions">
+                  <button
+                    class="card-play"
+                    aria-label={`Play ${game.name}`}
+                    onclick={() => play(game)}
+                    ><Icon name="play" size={15} /></button
+                  ><button
+                    class="card-info"
+                    aria-label={`Open ${game.name} details`}
+                    onclick={() => chooseGame(game)}
+                    ><Icon name="info" size={15} /></button
+                  >
+                </div>
               </div>{/each}
           </div>
           {#if rendered.length < visible.length}<div
@@ -963,7 +1079,7 @@
           {@render details(visibleSelected)}
         </aside>{/if}
     </div>
-    {#if error || status || pending || metadataRunning}<div
+    {#if notice || metadataRunning}<div
         class="status-bar"
         class:error-status={Boolean(error)}
         role={error ? 'alert' : 'status'}
@@ -975,8 +1091,7 @@
               ? 'refresh'
               : 'check'}
           size={16}
-        /><span
-          >{error || (pending && !metadataRunning ? 'Working…' : status)}</span
+        /><span>{notice}</span>
         >{#if metadataRunning}<Button
             variant="ghost"
             onclick={() => (stopMetadata = true)}>Stop fetching</Button
@@ -1033,6 +1148,7 @@
     title="Game details"
     close={() => (detailsOpen = false)}
     wide
+    page
     ><div class="detail-modal">{@render details(visibleSelected)}</div></Modal
   >{/if}
 {#if modal === 'add' || modal === 'edit'}<GameEditor
