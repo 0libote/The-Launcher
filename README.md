@@ -17,6 +17,14 @@ A personal game shelf with a Svelte 5 / TypeScript interface and a Tauri 2 / Rus
 
 Real libraries start empty. The explicit browser demo shows a catalogue of real store games with hotlinked artwork; demo edits stay in that tab. The app uses bundled fonts; no remote font service or art is required to browse offline.
 
+## Screenshots
+
+![Library grid with continue-playing rail](docs/screenshots/rewrite/library-grid.png)
+![Game page with banner hero and information rail](docs/screenshots/rewrite/game-details.png)
+![Shelf view](docs/screenshots/rewrite/library-shelf.png)
+
+Captured from the explicit browser demo (`bun run dev:web`, then open `http://localhost:1420/?demo`). All captures live in `docs/screenshots/rewrite/`.
+
 ## Develop
 
 Install Rust (the version is pinned in `rust-toolchain.toml`) and Bun (pinned in `package.json`). On Windows, install Visual Studio Build Tools with Desktop development with C++ and a Windows SDK. Tauri requires WebView2 on Windows; the NSIS installer uses Tauri’s default WebView2 installation handling.
