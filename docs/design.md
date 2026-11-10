@@ -20,4 +20,4 @@ Keyboard users can use Tab, arrows, Enter/Space, Escape, `/`, and Ctrl/Cmd+K. Se
 
 ## Captures
 
-The images in `screenshots/rewrite/` capture the implemented Svelte screens using a demo catalogue of real store games with hotlinked Steam CDN artwork in the explicit browser demo. Fortnite and Halo Infinite intentionally show the generated fallback covers. They are not native Windows captures. The older PNG files outside that directory are historical Rune captures and no longer represent the implementation.
+The images in `screenshots/rewrite/` capture the implemented Svelte screens using a demo catalogue of real store games with hotlinked Steam CDN artwork in the explicit browser demo. Fortnite and Halo Infinite intentionally show the generated fallback covers. They are not native Windows captures.
