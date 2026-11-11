@@ -16,6 +16,7 @@
     demoSnapshot,
     type Snapshot,
   } from './lib/api';
+  import { warmThumbnails } from './lib/artwork';
   import {
     defaultWorkspace,
     defaultSettings,
@@ -40,7 +41,7 @@
   let previewWorkspace = $state<Workspace | null>(null);
   let settings = $state(defaultSettings());
   // Dark-first like Steam/Playnite: game libraries read best on a dark
-  // canvas. Users can still pick light or system from the top bar.
+  // canvas. Users can still pick light or system from Preferences.
   let appearance = $state<Appearance>(
     typeof localStorage !== 'undefined'
       ? (localStorage.getItem('launcher-appearance') as Appearance) || 'dark'
@@ -118,6 +119,9 @@
         `rgb(${value.join(',')})`,
       );
     document.documentElement.dataset.theme = effectiveAppearance;
+    // Mirrored on <html> (not just .app-shell) so fixed overlays teleported
+    // to <body> by the dialog portal still match .has-titlebar rules.
+    document.documentElement.classList.toggle('has-titlebar', desktop);
   });
   function applySkin(dark: boolean) {
     active.skin = dark ? t3DarkSkin() : t3LightSkin();
@@ -160,6 +164,16 @@
     );
     observer.observe(node);
     return () => observer.disconnect();
+  });
+  // Decode-ahead: after things settle, warm the next unseen slice so
+  // scrolling into it finds art already decoded. Debounced and desktop-only;
+  // the warmer itself backs off while visible tiles are loading.
+  $effect(() => {
+    if (!desktop) return;
+    const upcoming = visible.slice(renderLimit, renderLimit + 40);
+    if (upcoming.length === 0) return;
+    const timer = setTimeout(() => void warmThumbnails(upcoming), 1000);
+    return () => clearTimeout(timer);
   });
   const selected = $derived(
     library.games.find((game) => identity(game) === selectedKey) ?? null,
@@ -342,13 +356,6 @@
   async function saveTileWidth() {
     await persistWorkspace($state.snapshot(workspace));
   }
-  // Steam-style continue strip: recent games above the All games grid.
-  // Hero buttons carry their own labels so grid card names stay unique.
-  const continuePlaying = $derived(
-    collection === 'All games' && !query.trim() && !installedOnly
-      ? filterGames(library.games, 'Recently played', '', 'recent').slice(0, 5)
-      : [],
-  );
   async function importGames() {
     const generation = modalGeneration;
     await task(async () => {
@@ -802,16 +809,6 @@
       </div>
       <div class="topbar-actions">
         <Button
-          variant="icon"
-          onclick={cycleAppearance}
-          aria-label={`Appearance: ${appearance}. Activate to switch theme`}
-          aria-pressed={effectiveAppearance === 'dark'}
-          title={`Appearance: ${appearance} (Ctrl+Alt+A)`}
-          ><Icon
-            name={effectiveAppearance === 'dark' ? 'sun' : 'moon'}
-            size={17}
-          /></Button
-        ><Button
           variant="secondary"
           class="import-button"
           onclick={() => {
@@ -863,34 +860,6 @@
             >{visible.length} {visible.length === 1 ? 'game' : 'games'}</span
           >
         </div>
-        {#if continuePlaying.length}<section
-            class="continue-rail"
-            aria-label="Continue playing"
-          >
-            <div class="continue-head">
-              <h2>Continue playing</h2>
-              <span class="muted">Jump back in where you left off</span>
-            </div>
-            <div class="continue-cards">
-              {#each continuePlaying as game (identity(game))}<div
-                  class="hero-card"
-                >
-                  <button
-                    class="hero-main"
-                    onclick={() => chooseGame(game)}
-                    ><Cover {game} url={coverUrl(game)} /><span
-                      class="hero-name"
-                      aria-hidden="true">{game.name}</span
-                    ><span class="sr-only">{game.name}: open details</span></button
-                  ><button
-                    class="hero-play"
-                    onclick={() => play(game)}
-                    aria-label={`Play ${game.name}`}
-                    ><Icon name="play" size={16} /></button
-                  >
-                </div>{/each}
-            </div>
-          </section>{/if}
         <div
           class="library-controls"
           class:controls-bottom={active.layout.tools === 'bottom'}

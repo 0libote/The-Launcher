@@ -191,15 +191,15 @@ export async function command<T = unknown>(
       const thumb = (await native('artwork_thumbnail', {
         handle: id,
         kind: args.kind ?? 'cover',
-      })) as { png_base64: string } | null;
-      result = thumb ? `data:image/png;base64,${thumb.png_base64}` : null;
+      })) as { mime: string; image_base64: string } | null;
+      result = thumb ? `data:${thumb.mime};base64,${thumb.image_base64}` : null;
       break;
     }
     case 'preview_artwork': {
       const thumb = (await native('artwork_preview', {
         choice: args.choice,
-      })) as { png_base64: string };
-      result = `data:image/png;base64,${thumb.png_base64}`;
+      })) as { mime: string; image_base64: string };
+      result = `data:${thumb.mime};base64,${thumb.image_base64}`;
       break;
     }
     case 'backup_library': {

@@ -4,6 +4,7 @@
   let { game, kind }: { game: Game; kind: 'background' | 'logo' } = $props();
   let url = $state<string | null>(null);
   let failed = $state(false);
+  let loaded = $state(false);
   // Demo entries hotlink public store artwork; real libraries resolve local
   // art through the desktop thumbnail queue.
   const remote = $derived(
@@ -34,11 +35,15 @@
       src={url}
       alt=""
       decoding="async"
+      class:cover-ready={loaded}
+      onload={() => (loaded = true)}
       onerror={() => (failed = true)}
     />{:else if remote}<img
       src={remote}
       alt=""
       decoding="async"
+      class:cover-ready={loaded}
+      onload={() => (loaded = true)}
       onerror={() => (failed = true)}
     />{/if}
 {/if}

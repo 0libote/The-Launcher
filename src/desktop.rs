@@ -29,7 +29,8 @@ use crate::{
 };
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::collections::{HashMap, VecDeque};
+use std::path::{Path, PathBuf};
 
 // ---------------------------------------------------------------------------
 // Shared shapes (frontend contract)
@@ -75,12 +76,15 @@ pub struct ImageChoiceDto {
     pub source: String,
 }
 
-/// Bounded PNG thumbnail (480x720 box) encoded as base64 for `<img>` use.
+/// Bounded thumbnail (480x720 box) encoded for `<img>` use. Covers and
+/// backgrounds travel as JPEG (opaque art, ~7x smaller than PNG); logos stay
+/// PNG to preserve transparency.
 #[derive(Clone, Debug, Serialize)]
 pub struct ThumbnailDto {
     pub width: u32,
     pub height: u32,
-    pub png_base64: String,
+    pub mime: String,
+    pub image_base64: String,
 }
 
 /// Result of a metadata fetch after its baseline-preserving merge.
@@ -418,6 +422,117 @@ pub fn artwork_path(game: &Game, kind: &str) -> Result<Option<PathBuf>> {
         "logo" => Ok(game.metadata.logo.clone()),
         _ => bail!("Unknown artwork field; use cover, background, or logo"),
     }
+}
+
+/// Cache identity for a decoded thumbnail. The file length and mtime make a
+/// replaced image miss; a handle or kind change misses by construction.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ThumbKey {
+    handle: String,
+    kind: String,
+    path: PathBuf,
+    len: u64,
+    mtime: u64,
+}
+
+impl ThumbKey {
+    pub fn for_file(handle: &str, kind: &str, path: &Path) -> Result<Self> {
+        let meta = std::fs::metadata(path)
+            .with_context(|| format!("Cover image is unavailable: {}", path.display()))?;
+        let mtime = meta
+            .modified()
+            .map_err(|_| anyhow::anyhow!("Cover image has no timestamp"))?
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        Ok(Self {
+            handle: handle.to_string(),
+            kind: kind.to_string(),
+            path: path.to_path_buf(),
+            len: meta.len(),
+            mtime,
+        })
+    }
+}
+
+/// Bounded in-memory thumbnail store. Decoding a cached art file costs
+/// hundreds of milliseconds (measured ~540ms for a 3.8 MiB photo: decode,
+/// downscale, PNG re-encode); repeats within a session must not pay it.
+/// Oldest entries evict past capacity; file changes miss via [`ThumbKey`].
+pub struct ThumbCache {
+    map: HashMap<ThumbKey, ThumbnailDto>,
+    order: VecDeque<ThumbKey>,
+    capacity: usize,
+}
+
+impl ThumbCache {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            map: HashMap::new(),
+            order: VecDeque::new(),
+            capacity: capacity.max(1),
+        }
+    }
+
+    pub fn get(&self, key: &ThumbKey) -> Option<ThumbnailDto> {
+        self.map.get(key).cloned()
+    }
+
+    pub fn insert(&mut self, key: ThumbKey, value: ThumbnailDto) {
+        if self.map.insert(key.clone(), value).is_none() {
+            // New key: track insertion order and evict the oldest past capacity.
+            self.order.push_back(key);
+            while self.map.len() > self.capacity {
+                if let Some(old) = self.order.pop_front() {
+                    self.map.remove(&old);
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
+}
+
+/// Encode thumbnail pixels for transfer. Opaque kinds (cover, background)
+/// travel as JPEG quality 85 (~7x smaller and ~2x faster to encode than
+/// PNG on photo art); logos stay PNG to preserve transparency.
+pub fn encode_thumbnail(thumb: &metadata::UiThumbnail, kind: &str) -> Result<(String, Vec<u8>)> {
+    use image::ImageEncoder;
+    if kind.trim().to_lowercase().as_str() == "logo" {
+        let mut png = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut png)
+            .write_image(
+                &thumb.rgba,
+                thumb.width,
+                thumb.height,
+                image::ExtendedColorType::Rgba8,
+            )
+            .context("Could not encode artwork thumbnail")?;
+        return Ok(("image/png".to_string(), png));
+    }
+    let rgb = image::DynamicImage::ImageRgba8(
+        image::RgbaImage::from_raw(thumb.width, thumb.height, thumb.rgba.clone())
+            .context("Thumbnail pixels do not match their dimensions")?,
+    )
+    .to_rgb8();
+    let mut jpg = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpg, 85)
+        .write_image(
+            &rgb,
+            thumb.width,
+            thumb.height,
+            image::ExtendedColorType::Rgb8,
+        )
+        .context("Could not encode artwork thumbnail")?;
+    Ok(("image/jpeg".to_string(), jpg))
 }
 
 pub fn parse_image_kind(kind: &str) -> Result<ImageKind> {
@@ -1053,6 +1168,79 @@ mod tests {
         assert!(set_cover_local(&mut library, &handle, bad.to_str().unwrap()).is_err());
         assert!(library.games[0].cover.is_none());
     }
+
+    fn noisy_fixture() -> metadata::UiThumbnail {
+        // Gradient plus noise so JPEG/PNG sizes differ like photo art.
+        let (w, h) = (96u32, 144u32);
+        let mut pixels = Vec::with_capacity((w * h * 3) as usize);
+        for y in 0..h {
+            for x in 0..w {
+                let v = (x.wrapping_mul(7).wrapping_add(y.wrapping_mul(13))) as u8;
+                pixels.extend([v, v.wrapping_add(x as u8), v.wrapping_add(y as u8)]);
+            }
+        }
+        let mut png = Vec::new();
+        {
+            use image::ImageEncoder;
+            image::codecs::png::PngEncoder::new(&mut png)
+                .write_image(&pixels, w, h, image::ExtendedColorType::Rgb8)
+                .unwrap();
+        }
+        metadata::ui_thumbnail_from_bytes(&png).unwrap()
+    }
+
+    #[test]
+    fn thumbnails_encode_jpeg_for_covers_and_png_for_logos() {
+        let thumb = noisy_fixture();
+        let (mime, jpg) = encode_thumbnail(&thumb, "cover").unwrap();
+        assert_eq!(mime, "image/jpeg");
+        assert!(jpg.starts_with(&[0xFF, 0xD8]), "JPEG magic");
+        let (mime, png) = encode_thumbnail(&thumb, "logo").unwrap();
+        assert_eq!(mime, "image/png");
+        assert!(png.starts_with(&[0x89, b'P', b'N', b'G']), "PNG magic");
+        assert!(
+            jpg.len() < png.len(),
+            "photo art travels smaller as JPEG ({} vs {})",
+            jpg.len(),
+            png.len()
+        );
+    }
+
+    #[test]
+    fn thumbnail_cache_hits_evicts_oldest_and_tracks_file_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let art = dir.path().join("cover.png");
+        fs::write(&art, vec![0u8; 100]).unwrap();
+        let key = ThumbKey::for_file("steam:1", "cover", &art).unwrap();
+        assert_eq!(key, ThumbKey::for_file("steam:1", "cover", &art).unwrap());
+        fs::write(&art, vec![0u8; 200]).unwrap();
+        assert_ne!(key, ThumbKey::for_file("steam:1", "cover", &art).unwrap());
+
+        let dto = |n: u32| ThumbnailDto {
+            width: n,
+            height: n,
+            mime: "image/jpeg".into(),
+            image_base64: n.to_string(),
+        };
+        let mut cache = ThumbCache::new(2);
+        let k1 = key.clone();
+        let mut k2 = key.clone();
+        k2.handle = "steam:2".into();
+        let mut k3 = key.clone();
+        k3.handle = "steam:3".into();
+        cache.insert(k1.clone(), dto(1));
+        cache.insert(k2.clone(), dto(2));
+        assert_eq!(cache.len(), 2);
+        assert_eq!(cache.get(&k1).unwrap().width, 1);
+        cache.insert(k3.clone(), dto(3));
+        assert_eq!(cache.len(), 2);
+        assert!(cache.get(&k1).is_none(), "oldest evicts first");
+        assert_eq!(cache.get(&k2).unwrap().width, 2);
+        assert_eq!(cache.get(&k3).unwrap().width, 3);
+        cache.insert(k2.clone(), dto(22));
+        assert_eq!(cache.len(), 2, "re-insert replaces without growing");
+        assert_eq!(cache.get(&k2).unwrap().width, 22);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1108,10 +1296,13 @@ mod bridge {
 
     /// Shared Tauri state. Every command clones under a short lock and does
     /// IO/network inside `spawn_blocking`, never while the mutex is held.
+    /// Decoded thumbnails live in `thumb_cache` so scrolling back over art
+    /// never re-pays the hundreds of milliseconds a decode costs.
     pub struct AppState {
         pub paths: AppPaths,
         inner: Mutex<StateInner>,
         write_gate: tauri::async_runtime::Mutex<()>,
+        thumb_cache: Mutex<ThumbCache>,
     }
 
     /// Load persisted state at startup. A damaged or future `library.json`
@@ -1144,6 +1335,7 @@ mod bridge {
         Ok(AppState {
             paths,
             write_gate: tauri::async_runtime::Mutex::new(()),
+            thumb_cache: Mutex::new(ThumbCache::new(256)),
             inner: Mutex::new(StateInner {
                 library,
                 workspace,
@@ -1353,53 +1545,60 @@ mod bridge {
 
     /// Bounded artwork thumbnail for the frontend. Reads only the stored
     /// cover/background/logo path and decodes through the shared limits;
-    /// missing art yields `None` so the UI keeps its generated fallback.
+    /// missing art yields `None` so the UI keeps its loading state, then its
+    /// generated fallback. Decoded results are cached per file state, so
+    /// scrolling back over art costs one mutex lookup instead of a decode.
     #[tauri::command]
     pub async fn artwork_thumbnail(
         state: State<'_, AppState>,
         handle: String,
         kind: String,
     ) -> Result<Option<ThumbnailDto>, String> {
-        let path = {
+        let game = {
             let inner = state
                 .inner
                 .lock()
                 .map_err(|_| "Application state is unavailable".to_string())?;
-            let game = inner
+            inner
                 .library
                 .games
                 .iter()
                 .find(|game| game.handle() == handle)
                 .context("That game is no longer in the library")
                 .map_err(fail)?
-                .clone();
-            artwork_path(&game, &kind).map_err(fail)?
+                .clone()
         };
+        let path = artwork_path(&game, &kind).map_err(fail)?;
         let Some(path) = path else { return Ok(None) };
-        tauri::async_runtime::spawn_blocking(move || -> Result<Option<ThumbnailDto>> {
+        let key = ThumbKey::for_file(&handle, &kind, &path).map_err(fail)?;
+        if let Some(hit) = state
+            .thumb_cache
+            .lock()
+            .map_err(|_| "Application state is unavailable".to_string())?
+            .get(&key)
+        {
+            return Ok(Some(hit));
+        }
+        let fresh = tauri::async_runtime::spawn_blocking(move || -> Result<ThumbnailDto> {
             let thumb = metadata::ui_thumbnail_from_file(&path)?;
-            let mut png = Vec::new();
-            {
-                use image::ImageEncoder;
-                image::codecs::png::PngEncoder::new(&mut png)
-                    .write_image(
-                        &thumb.rgba,
-                        thumb.width,
-                        thumb.height,
-                        image::ExtendedColorType::Rgba8,
-                    )
-                    .context("Could not encode artwork thumbnail")?;
-            }
+            let (mime, bytes) = encode_thumbnail(&thumb, &kind)?;
             use base64::Engine as _;
-            Ok(Some(ThumbnailDto {
+            Ok(ThumbnailDto {
                 width: thumb.width,
                 height: thumb.height,
-                png_base64: base64::engine::general_purpose::STANDARD.encode(&png),
-            }))
+                mime,
+                image_base64: base64::engine::general_purpose::STANDARD.encode(&bytes),
+            })
         })
         .await
         .map_err(|error| format!("Background task failed: {error}"))?
-        .map_err(fail)
+        .map_err(fail)?;
+        state
+            .thumb_cache
+            .lock()
+            .map_err(|_| "Application state is unavailable".to_string())?
+            .insert(key, fresh.clone());
+        Ok(Some(fresh))
     }
 
     #[tauri::command]
@@ -1431,7 +1630,8 @@ mod bridge {
             Ok(ThumbnailDto {
                 width: thumb.width,
                 height: thumb.height,
-                png_base64: base64::engine::general_purpose::STANDARD.encode(&png),
+                mime: "image/png".to_string(),
+                image_base64: base64::engine::general_purpose::STANDARD.encode(&png),
             })
         })
         .await

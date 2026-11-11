@@ -85,7 +85,9 @@ html,
 body {
   margin: 0;
   min-width: 320px;
-  overflow-x: clip;
+  /* No overflow-x clip here: any non-visible x-overflow on html/body
+     disables position:sticky page-wide (titlebar, topbar). Contain wide
+     content in its own scroll container instead. */
 }
 body {
   font-size: 14px;
@@ -579,86 +581,7 @@ main {
   padding-bottom: 3px;
   font-variant-numeric: tabular-nums;
 }
-/* Steam-style continue strip: a horizontal rail of recent games above the
-   grid, with one-tap Play like the Xbox recent tiles. */
-.continue-rail {
-  margin-bottom: 24px;
-}
-.continue-head {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  margin-bottom: 12px;
-}
-.continue-head h2 {
-  font-size: 15px;
-  font-weight: 600;
-}
-.continue-head .muted {
-  font-size: 12px;
-}
-.continue-cards {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(150px, 190px);
-  gap: 14px;
-  overflow-x: auto;
-  padding-bottom: 8px;
-  scroll-snap-type: x mandatory;
-}
-.hero-card {
-  position: relative;
-  scroll-snap-align: start;
-}
-.hero-main {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  width: 100%;
-  background: none;
-  padding: 0;
-  text-align: left;
-  color: var(--text);
-  border-radius: var(--radius);
-}
-.hero-main .cover {
-  transition:
-    transform 150ms ease,
-    box-shadow 150ms ease;
-}
-.hero-main:hover .cover {
-  transform: translateY(-2px);
-  box-shadow: var(--shadow);
-}
-.hero-name {
-  font-size: 13px;
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.hero-play {
-  position: absolute;
-  right: 8px;
-  bottom: 36px;
-  width: 34px;
-  height: 34px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  background: var(--accent);
-  color: #fff;
-  box-shadow: var(--shadow);
-}
-html[data-theme='dark'] .hero-play {
-  color: #18181b;
-}
-.hero-play:hover {
-  filter: brightness(1.08);
-}
-.game-card:focus-visible,
-.hero-main:focus-visible {
+.game-card:focus-visible {
   outline: 2px solid var(--selection);
   outline-offset: 2px;
 }
@@ -817,6 +740,33 @@ html[data-theme='dark'] .hero-play {
   height: 100%;
   object-fit: cover;
   display: block;
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+.cover img.cover-ready {
+  opacity: 1;
+}
+/* Neutral loading state: a quiet pulse that claims nothing. The generated
+   art below is only the permanent stand-in for games with no artwork. */
+.cover-loading {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    var(--surface) 30%,
+    var(--raised) 50%,
+    var(--surface) 70%
+  );
+  background-size: 200% 100%;
+  animation: cover-shimmer 1.2s ease-in-out infinite;
+}
+@keyframes cover-shimmer {
+  from {
+    background-position: 180% 0;
+  }
+  to {
+    background-position: -80% 0;
+  }
 }
 .cover-art {
   position: absolute;
@@ -1251,6 +1201,9 @@ html[data-theme='dark'] .is-favorite {
   isolation: isolate;
   border: 1px solid var(--line);
   margin-bottom: 16px;
+  /* Flat ground while banner art decodes; the gradient came from the
+     removed generated fallback. */
+  background-color: var(--surface);
   background:
     radial-gradient(ellipse at 75% 15%, var(--art-light), transparent 75%),
     linear-gradient(145deg, var(--art-base), var(--art-dark));
@@ -1262,21 +1215,6 @@ html[data-theme='dark'] .is-favorite {
   height: 100%;
   object-fit: cover;
   z-index: 1;
-}
-.detail-hero-fallback {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.detail-hero-fallback span {
-  font-family: var(--display);
-  font-size: 44px;
-  font-weight: 600;
-  letter-spacing: -0.03em;
-  color: var(--art-text);
-  opacity: 0.55;
 }
 .detail-hero-scrim {
   position: absolute;
@@ -1480,6 +1418,17 @@ html[data-theme='dark'] .dialog-overlay {
 .dialog-panel.wide {
   width: min(680px, calc(100% - 32px));
 }
+/* The desktop titlebar stays above dialogs, so shift fixed panels into the
+   space below it; otherwise tall pages slide under the bar and their top
+   row (including the dialog close button) collides with the window
+   controls. */
+.has-titlebar .dialog-panel {
+  top: calc(50% + 20px);
+  max-height: calc(100dvh - 68px);
+}
+.has-titlebar .dialog-panel.page {
+  max-height: calc(100dvh - 68px);
+}
 /* Steam-style game page: a near-full dialog with a full-bleed banner hero,
    an overlapping cover plus title, a prominent Play action, and an
    About plus Information column layout. */
@@ -1528,9 +1477,6 @@ html[data-theme='dark'] .dialog-overlay {
   border: 0;
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;
 }
-.dialog-panel.page .detail-hero-fallback span {
-  font-size: 84px;
-}
 .dialog-panel.page .detail-hero-source {
   left: auto;
   right: 12px;
@@ -1541,6 +1487,10 @@ html[data-theme='dark'] .dialog-overlay {
   z-index: 2;
   align-items: flex-end;
   gap: 20px;
+}
+/* No banner above: the title row starts flush instead of overlapping art. */
+.dialog-panel.page .detail-identity.no-hero {
+  margin-top: 0;
 }
 .dialog-panel.page .detail-cover {
   width: 148px;
@@ -1971,9 +1921,6 @@ form > label:first-child {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 20px 14px;
   }
-  .continue-cards {
-    grid-auto-columns: minmax(130px, 150px);
-  }
   .game-entry {
     contain-intrinsic-size: auto 280px;
   }
@@ -2067,12 +2014,12 @@ form > label:first-child {
     height: 170px;
     margin: 0 -16px 0;
   }
-  .dialog-panel.page .detail-hero-fallback span {
-    font-size: 56px;
-  }
   .dialog-panel.page .detail-identity {
     margin-top: -44px;
     gap: 12px;
+  }
+  .dialog-panel.page .detail-identity.no-hero {
+    margin-top: 0;
   }
   .dialog-panel.page .detail-cover {
     width: 108px;
@@ -2205,4 +2152,14 @@ form > label:first-child {
   max-height: 60px;
   object-fit: contain;
   object-position: left;
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+.detail-hero img {
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+.detail-hero img.cover-ready,
+.detail-logo img.cover-ready {
+  opacity: 1;
 }

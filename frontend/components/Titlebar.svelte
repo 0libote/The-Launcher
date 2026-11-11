@@ -22,15 +22,14 @@
   });
 </script>
 
-<!-- Double-click to toggle maximize. Keyboard users get the same action
-     from the maximize button, so the static-element handler is intentional. -->
-<!-- svelte-ignore a11y_no_static_element_interactions -->
+<!-- Double-click to toggle maximize is handled by the Tauri drag script
+     (data-tauri-drag-region below); a second handler here would toggle twice.
+     Keyboard users get the same action from the maximize button. -->
 <header
   class="titlebar"
-  data-tauri-drag-region
-  ondblclick={() => windowAction('toggleMaximize')}
+  data-tauri-drag-region="deep"
 >
-  <span class="titlebar-label" data-tauri-drag-region>{title}</span>
+  <span class="titlebar-label">{title}</span>
   <div class="window-controls">
     <Button
       variant="icon"

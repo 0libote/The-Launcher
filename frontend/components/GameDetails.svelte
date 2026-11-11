@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Game } from '../lib/model';
-  import { artSeed, initials, lastPlayed, source } from '../lib/model';
+  import { lastPlayed, source } from '../lib/model';
   import ArtworkImage from './ArtworkImage.svelte';
   import Cover from './Cover.svelte';
   import Button from './ui/button.svelte';
@@ -32,7 +32,6 @@
     busy: boolean;
     openLink: (index: number) => void;
   } = $props();
-  const seed = $derived(artSeed(game.name));
   const playLabel = $derived(
     game.installed === false && game.target.kind === 'steam'
       ? 'Install with Steam'
@@ -41,11 +40,8 @@
 </script>
 
 <section class="game-details" aria-label={`${game.name} details`}>
-  <div class="detail-hero art-{seed}">
-    {#if game.metadata.background}<ArtworkImage {game} kind="background" />{/if}
-    <div class="detail-hero-fallback" aria-hidden="true">
-      <span>{initials(game.name)}</span>
-    </div>
+  {#if game.metadata.background}<div class="detail-hero">
+    <ArtworkImage {game} kind="background" />
     <div class="detail-hero-scrim" aria-hidden="true"></div>
     <span class="detail-hero-source">{source(game)}</span>
     <Button
@@ -54,12 +50,14 @@
       onclick={close}
       aria-label="Close game details"><Icon name="close" /></Button
     >
-  </div>
+  </div>{/if}
   {#if game.metadata.logo}<div class="detail-logo">
       <ArtworkImage {game} kind="logo" />
     </div>{/if}
-  <div class="detail-identity">
-    <div class="detail-cover"><Cover {game} url={cover} /></div>
+  <div class="detail-identity" class:no-hero={!game.metadata.background}>
+    {#if cover || game.cover}<div class="detail-cover"
+        ><Cover {game} url={cover} /></div
+      >{/if}
     <div class="detail-heading">
       <div class="detail-title">
         <h2>{game.name}</h2>

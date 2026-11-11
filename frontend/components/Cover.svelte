@@ -9,6 +9,7 @@
     compact = false,
   }: { game: Game; url?: string | null; compact?: boolean } = $props();
   let failed = $state(false);
+  let loaded = $state(false);
   let element = $state<HTMLDivElement>();
   let localUrl = $state<string | null>(null);
   // Demo entries hotlink public store artwork; real libraries resolve local
@@ -24,15 +25,19 @@
     localUrl = null;
     if (!node || !path || !desktop || url) return;
     let alive = true;
-    let generation = 0;
+    let loaded = false;
+    // Load once on first visibility and keep the result: clearing on
+    // scroll-out flashes the generated placeholder every time a tile
+    // re-enters the viewport. Mounted tiles are batch-capped, so keeping
+    // resolved images is bounded.
     const observer = new IntersectionObserver(
       (entries) => {
-        const request = ++generation;
-        if (entries.some((entry) => entry.isIntersecting)) {
-          coverThumbnail($state.snapshot(game)).then((value) => {
-            if (alive && request === generation) localUrl = value;
-          });
-        } else localUrl = null;
+        if (loaded || !entries.some((entry) => entry.isIntersecting)) return;
+        loaded = true;
+        coverThumbnail($state.snapshot(game)).then((value) => {
+          if (alive) localUrl = value;
+        });
+        observer.disconnect();
       },
       { rootMargin: '200px' },
     );
@@ -46,7 +51,13 @@
     url;
     game.cover;
     failed = false;
+    loaded = false;
   });
+  // Local art is still decoding: show a neutral shimmer, never the generated
+  // stand-in, so nothing on screen pretends to be the cover.
+  const waiting = $derived(
+    desktop && !failed && !url && !localUrl && !remote && !!game.cover,
+  );
 </script>
 
 <div
@@ -60,8 +71,11 @@
       alt=""
       loading="lazy"
       decoding="async"
+      class:cover-ready={loaded}
+      onload={() => (loaded = true)}
       onerror={() => (failed = true)}
     />
+  {:else if waiting}<div class="cover-loading" aria-hidden="true"></div>
   {:else}<div class="cover-art" aria-hidden="true">
       <div class="art-orbit"></div>
       <span class="art-initials">{initials(game.name)}</span><span
