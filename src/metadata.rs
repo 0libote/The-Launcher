@@ -637,10 +637,10 @@ fn validate_image(bytes: &[u8]) -> Result<image::DynamicImage> {
         .context("Artwork is invalid or exceeds 4096 × 4096")
 }
 
-/// Decode a cached artwork file into UI-ready thumbnail bytes (480x720).
-/// Runs on worker threads; the UI inserts the bytes without decoding to
-/// avoid frame hitches. Returns an error for missing/corrupt files, in
-/// which case the UI keeps generated gradient art.
+/// Decode a cached artwork file into UI-ready thumbnail pixels (480x720).
+/// Runs on worker threads; the desktop layer encodes and caches the result
+/// for transfer. Returns an error for missing/corrupt files, in which case
+/// the UI keeps its loading state, then its generated fallback art.
 pub fn ui_thumbnail_from_file(path: &Path) -> Result<UiThumbnail> {
     let bytes = std::fs::read(path).context("Cover image is unavailable")?;
     ui_thumbnail_from_bytes(&bytes)
