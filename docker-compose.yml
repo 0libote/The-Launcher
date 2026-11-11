@@ -1,0 +1,17 @@
+services:
+  launcher:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    ports:
+      - '8080:8080'
+    environment:
+      # Required. Generate one, e.g. `openssl rand -base64 32`, and keep it
+      # with your other secrets. The app sends it as a bearer token.
+      LAUNCHER_API_KEY: ${LAUNCHER_API_KEY:?Set LAUNCHER_API_KEY before starting}
+    volumes:
+      - launcher-data:/data
+    restart: unless-stopped
+
+volumes:
+  launcher-data:

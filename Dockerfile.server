@@ -1,0 +1,36 @@
+# The Launcher companion server (self-hosted catalogue + sync hub).
+# The desktop app embeds no server; this image builds the separate
+# `launcher-server` binary (no GUI dependencies) and the built web UI.
+#
+#   LAUNCHER_API_KEY=... docker compose up --build
+#
+# Stage 1: build the responsive web UI (same screens as the desktop app).
+FROM oven/bun:1 AS web
+WORKDIR /app
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile
+COPY . .
+RUN bun run build:web
+
+# Stage 2: build the server binary. Any recent stable Rust works; the server
+# only needs std plus the core library's existing dependencies.
+FROM rust:1-bookworm AS backend
+WORKDIR /app
+COPY Cargo.toml Cargo.lock build.rs ./
+COPY src ./src
+RUN cargo build --release --bin launcher-server
+
+# Stage 3: minimal runtime. /data is the persistent volume for library.json.
+FROM debian:bookworm-slim
+RUN useradd --create-home --shell /usr/sbin/nologin launcher \
+  && mkdir -p /data /app/public \
+  && chown launcher:launcher /data /app/public
+COPY --from=backend /app/target/release/launcher-server /app/launcher-server
+COPY --from=web /app/dist /app/public
+USER launcher
+ENV LAUNCHER_DATA_DIR=/data \
+  LAUNCHER_BIND=0.0.0.0:8080 \
+  LAUNCHER_PUBLIC_DIR=/app/public
+VOLUME /data
+EXPOSE 8080
+CMD ["/app/launcher-server"]

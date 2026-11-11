@@ -15,6 +15,10 @@ name = "the-launcher"
 path = "src/main.rs"
 required-features = ["desktop"]
 
+[[bin]]
+name = "launcher-server"
+path = "src/bin/launcher-server.rs"
+
 [features]
 default = []
 desktop = ["dep:tauri", "dep:rfd"]

@@ -17,6 +17,15 @@
     type Snapshot,
   } from './lib/api';
   import {
+    fetchServerLibrary,
+    fetchServerStats,
+    loadServerConfig,
+    normalizeServerUrl,
+    pushLibraryToServer,
+    saveServerConfig,
+    serverFromQuery,
+  } from './lib/server';
+  import {
     defaultWorkspace,
     defaultSettings,
     filterGames,
@@ -77,6 +86,7 @@
     | 'artwork'
     | 'remove'
     | 'restore'
+    | 'server'
   >(null);
   let modalGeneration = 0;
   $effect(() => {
@@ -89,6 +99,9 @@
   let accountId = $state('');
   let apiKey = $state('');
   let sessionArtKey = $state('');
+  let serverMode = $state(false);
+  let serverUrl = $state('');
+  let serverForm = $state({ url: '', apiKey: '' });
   let metadataQuery = $state('');
   let matches = $state<{ app_id: number; name: string }[]>([]);
   let warnings = $state<string[]>([]);
@@ -219,6 +232,10 @@
       );
   }
   async function saveGame(game: Game) {
+    if (serverMode)
+      throw new Error(
+        'The server view is read-only. Leave it to edit your local library.',
+      );
     if (demo) {
       const old = modal === 'edit' ? selectedKey : null;
       if (
@@ -249,6 +266,10 @@
     if (settings.automatic && !demo) void task(() => automaticMetadata([game]));
   }
   async function updateGame(game: Game, patch: Partial<Game>) {
+    if (serverMode)
+      throw new Error(
+        'The server view is read-only. Leave it to edit your local library.',
+      );
     if (demo) {
       library = {
         ...library,
@@ -276,6 +297,10 @@
   }
   async function play(game: Game) {
     await task(async () => {
+      if (serverMode)
+        throw new Error(
+          'Launching is not available in the server view. Play from the desktop app.',
+        );
       if (demo)
         throw new Error(
           'Demo games cannot be launched. Add your own games in the desktop app.',
@@ -352,6 +377,10 @@
   async function importGames() {
     const generation = modalGeneration;
     await task(async () => {
+      if (serverMode)
+        throw new Error(
+          'Imports run on the desktop app. Leave the server view first.',
+        );
       if (demo)
         throw new Error('Open the desktop app to scan your installed games.');
       const result = await command<{ warnings: string[] }>('import_games', {
@@ -519,6 +548,10 @@
     if (!selected) return;
     const game = selected;
     await task(async () => {
+      if (serverMode)
+        throw new Error(
+          'The server view is read-only. Leave it to edit your local library.',
+        );
       if (demo) {
         library = {
           ...library,
@@ -537,6 +570,56 @@
       }
       if (modal === 'remove' && generation === modalGeneration) modal = null;
     }, 'Game removed from library');
+  }
+  async function pullServer() {
+    await task(async () => {
+      const stored = loadServerConfig();
+      const url = normalizeServerUrl(serverForm.url || stored.url);
+      const key = serverForm.apiKey || stored.apiKey;
+      const remote = await fetchServerLibrary(url, key);
+      saveServerConfig({ url, apiKey: key });
+      library = remote;
+      serverMode = true;
+      serverUrl = url;
+      selectedKey = null;
+      detailsOpen = false;
+      dataPath = `Server catalogue — ${url}`;
+      modal = null;
+    }, 'Server catalogue loaded');
+  }
+  async function pushServer() {
+    await task(async () => {
+      if (!desktop)
+        throw new Error(
+          'Publishing needs the desktop app. This view is read-only.',
+        );
+      const url = normalizeServerUrl(serverForm.url);
+      const result = await pushLibraryToServer(
+        url,
+        serverForm.apiKey,
+        $state.snapshot(library),
+      );
+      saveServerConfig({ url, apiKey: serverForm.apiKey });
+      serverUrl = url;
+      status = `Published ${result.games} ${result.games === 1 ? 'game' : 'games'} to the server`;
+    });
+  }
+  async function testServer() {
+    await task(async () => {
+      const url = normalizeServerUrl(serverForm.url);
+      const { stats } = await fetchServerStats(url, serverForm.apiKey);
+      status = `Connected: ${stats.total} ${stats.total === 1 ? 'game' : 'games'} on the server`;
+    });
+  }
+  async function leaveServer() {
+    serverMode = false;
+    serverUrl = '';
+    modal = null;
+    if (desktop) await task(() => reload());
+    else {
+      library = { schema_version: 1, games: [] };
+      dataPath = '';
+    }
   }
   function keyboard(event: KeyboardEvent) {
     if (event.key === 'Escape') {
@@ -628,10 +711,29 @@
   }
   onMount(() => {
     (async () => {
+      serverForm = loadServerConfig();
       try {
         if (demo) adopt(demoSnapshot());
         else if (desktop) await reload();
-        else adopt({ library, workspace, settings, data_path: '' });
+        else {
+          const queried = serverFromQuery();
+          const stored = loadServerConfig();
+          if (queried) {
+            stored.url = queried;
+            saveServerConfig(stored);
+          }
+          serverForm = { url: stored.url, apiKey: stored.apiKey };
+          if (stored.url) {
+            try {
+              library = await fetchServerLibrary(stored.url, stored.apiKey);
+              serverMode = true;
+              serverUrl = normalizeServerUrl(stored.url);
+              dataPath = `Server catalogue — ${serverUrl}`;
+            } catch (e) {
+              error = e instanceof Error ? e.message : String(e);
+            }
+          } else adopt({ library, workspace, settings, data_path: '' });
+        }
         const freshSkin = JSON.stringify(active.skin);
         if (
           freshSkin === JSON.stringify(t3LightSkin()) ||
@@ -774,6 +876,8 @@
         ></button
       ><button onclick={() => (modal = 'settings')}
         ><Icon name="settings" /><span>Preferences</span></button
+      ><button onclick={() => (modal = 'server')}
+        ><Icon name="refresh" /><span>Server & sync</span></button
       >
     </nav>
     <div class="local-note">
@@ -827,6 +931,15 @@
         <Icon name="info" size={16} /><span
           >Demo collection. Changes stay in this browser tab; launching and
           imports need the desktop app.</span
+        >
+      </div>{:else if serverMode}<div
+        class="demo-banner"
+        role="note"
+        aria-label="Server mode"
+      >
+        <Icon name="info" size={16} /><span
+          >Server view — a read-only catalogue from {serverUrl}. Launching and
+          edits stay on the desktop app.</span
         >
       </div>{:else if !desktop}<div
         class="demo-banner"
@@ -1392,5 +1505,57 @@
             status = 'Library restored';
           })}>Choose backup</Button
       >
+    </div></Modal
+  >
+  {:else if modal === 'server'}<Modal
+    {error}
+    title="Server & sync"
+    close={() => (modal = null)}
+    ><p class="muted">
+      Run the companion server on your home server, publish your desktop
+      library to it, then browse your collection from anywhere. The server
+      view is read-only and can never launch games.
+    </p>
+    {#if serverMode}<p class="muted">Currently viewing {serverUrl}.</p>{/if}
+    <label
+      >Server address<input
+        bind:value={serverForm.url}
+        inputmode="url"
+        placeholder="http://192.168.1.10:8080"
+        autocomplete="off"
+      /></label
+    >
+    <label
+      >API key<input
+        type="password"
+        bind:value={serverForm.apiKey}
+        autocomplete="off"
+        placeholder="The LAUNCHER_API_KEY from your server"
+      /></label
+    >
+    <p class="field-hint">
+      The address and key stay in this device only. Libraries include local
+      file paths, so keep the server on your own network behind HTTPS.
+    </p>
+    <div class="backup-actions">
+      <Button
+        variant="secondary"
+        disabled={pending > 0}
+        onclick={() => void testServer()}><Icon name="check" />Test connection</Button
+      ><Button
+        variant="secondary"
+        disabled={pending > 0}
+        onclick={() => void pullServer()}><Icon name="download" />View server catalogue</Button
+      >
+      {#if desktop}<Button
+          variant="secondary"
+          disabled={pending > 0}
+          onclick={() => void pushServer()}><Icon name="copy" />Publish this library</Button
+        >{/if}
+      {#if serverMode}<Button
+          variant="secondary"
+          disabled={pending > 0}
+          onclick={() => void leaveServer()}><Icon name="back" />Back to local library</Button
+        >{/if}
     </div></Modal
   >{/if}
