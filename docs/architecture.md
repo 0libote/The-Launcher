@@ -18,7 +18,7 @@ The earlier fully-Rust/no-webview constraint has been superseded by the product 
 - `src/desktop.rs`: validated application services and Tauri commands. Pure services compile/test without GUI libraries; native commands are behind the `desktop` feature.
 - `src/library.rs`, `launch.rs`, `steam.rs`, `epic.rs`, `xbox.rs`, `metadata.rs`, `workspace.rs`: retained native domains and their fixture tests.
 
-The default Cargo feature set tests the Rust core without GTK/WebKit. `bun run dev` and `bun run build` enable the desktop feature through the Tauri configuration. No local HTTP server is required in the installed app. Docker hosting and synchronization are future work, not an embedded desktop web server.
+The default Cargo feature set tests the Rust core without GTK/WebKit. `bun run dev` and `bun run build` enable the desktop feature through the Tauri configuration. No local HTTP server is required in the installed app. The companion catalogue/sync server is a separate `launcher-server` binary (`src/server.rs`, `Dockerfile.server`, `docs/server.md`); the desktop app embeds no server. Standalone desktop use remains offline.
 
 ## Data and launching
 

@@ -44,7 +44,7 @@ For frontend development without native prerequisites:
 bun run dev:web
 ```
 
-Open `http://localhost:1420/?demo`. Demo edits stay in that browser tab’s session storage and never touch the real library. Without `?demo`, a plain browser displays a desktop-app explanation and an empty library. There is no Docker API or synchronization yet.
+Open `http://localhost:1420/?demo`. Demo edits stay in that browser tab’s session storage and never touch the real library. Without `?demo`, a plain browser displays a desktop-app explanation and an empty library. Point the app at a self-hosted server (Server & sync) to browse your real catalogue from other devices; see [server](server.md). Launching is desktop-only.
 
 Linux is a development host. Native Linux builds require Tauri’s GTK/WebKit development packages; see [development](docs/development.md). `cargo test --lib` and `bun run check` test the Rust core without those GUI packages.
 

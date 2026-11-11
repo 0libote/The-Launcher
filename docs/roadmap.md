@@ -20,9 +20,9 @@ Tauri 2 shell; Svelte/TypeScript grid, list and shelf views; retained Rust launc
 - Add platforms, ROM scanning with import previews, and profiles for installed external emulators.
 - Expand collections around platform, edition, format and collection status.
 
-## Later: self-hosted companion
+## Later: self-hosted companion (started)
 
-Reuse the responsive UI with a Docker-hosted API and persistent data volume. Start with read-only desktop-published collection browsing on phones. Define authentication, access boundaries and a portable asset model before exposing private libraries. Introduce editing and conflict-aware synchronization only after the read-only workflow works. Standalone desktop use remains offline.
+Reuse the responsive UI with a Docker-hosted API and persistent data volume. The first slice exists: `launcher-server` publishes a read-only browsable catalogue (`GET /api/library|games|stats`), the desktop app publishes its library (`PUT /api/library`, Server & sync screen) and any device views it read-only. Authentication is one shared bearer key; launching is refused server-side. Still to come: editing and conflict-aware synchronization, playtime history, artwork serving, and a portable asset model before exposing private libraries beyond your own network. Standalone desktop use remains offline.
 
 ## Last: remote play
 
