@@ -611,12 +611,16 @@ mod tests {
     }
 
     fn sample_library() -> Library {
+        // `Library::add` requires an absolute executable path, and what
+        // counts as absolute differs per OS, so anchor the fixture in the
+        // platform temp dir instead of a Unix literal.
+        let exe = std::env::temp_dir().join("launcher-server-test-game.exe");
         let mut library = Library::default();
         library
             .add(game(
                 "Local",
                 Target::Executable {
-                    path: PathBuf::from("/games/local.exe"),
+                    path: exe,
                     arguments: vec![],
                     working_directory: None,
                 },
